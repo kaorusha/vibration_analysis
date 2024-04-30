@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import emd
 import memd.MEMD_all
 
+file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
+
 def read_data(file_name):
     workbook = pd.ExcelFile(file_name)
     # print("There are " + str(len(workbook.sheet_names)) + " sheets in this workbook")
@@ -84,38 +86,9 @@ def memd_demo():
     # print(imfs.shape) = (7,3,2500)
     plot_imfs(imfs, t, stopTime_plot = 2, color_array=[color['blue'], color['orange'], color['green']])
 
-def fft(df:pd.DataFrame):
-    acc = df[df.columns[0]]
-    sp = np.fft.rfft(acc, norm='forward')
-    freq = np.fft.rfftfreq(n=len(acc), d=1/48000)
-    plt.plot(freq[50:50000], np.abs(sp[50:50000]))
-    plt.xlabel("Frequency")
-    plt.ylabel("Amplitude")
-    #plt.legend()
-    plt.show()
-
-def fft_test():
-    N = 500
-    T = 1.0 / 600.0
-    x = np.linspace(0.0, N * T, N)
-    y = np.sin(60.0 * 2.0 * np.pi * x) + 0.5 * np.sin(90.0 * 2.0 * np.pi * x)
-    y_f = np.fft.rfft(y, norm='forward')
-    x_f = np.linspace(0.0, 1.0 / (2.0 * T), N // 2)
-    plt.plot(x_f, np.abs(y_f[:N // 2]))
-    plt.show()
-
-file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
-df = read_data(file_name)
-fft(df)
-def test_emd():
-    t = df.index
-    acc_all = df.transpose().to_numpy()
-    #imf = emd.sift.sift(acc.to_numpy())
-    stopCrit = [0.075, 0.75, 0.075]
-    imfs = memd.MEMD_all.memd(acc_all, 64, 'stop', stopCrit)
-    print(imfs.shape) # (18, 3, 96000)
-    plot_imfs(imfs, t, stopTime_plot = 2, color_array=[color['blue'], color['orange'], color['green']], print_imf=3)
-
+#acc = df[df.columns[0]]
+#imf = emd.sift.sift(acc.to_numpy())
+#imf = memd.MEMD_all.memd(df)
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
