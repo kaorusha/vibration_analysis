@@ -91,14 +91,27 @@ def memd_demo():
     # print(imfs.shape) = (7,3,2500)
     plot_imfs(imfs, t, stopTime_plot = 2, color_list=[color['blue'], color['orange'], color['green']])
 
+def largestpowerof2(n:int):
+    '''
+    return a number which is the largest power of 2 and less than n
+    '''
+    while(n & (n - 1)):
+        n &= (n - 1)
+    return n
+
 def fft(df:pd.DataFrame, title:str):
-    acc = df[df.columns[2]]
-    sp = np.fft.rfft(acc, norm='backward')
-    freq = np.fft.rfftfreq(n=len(acc), d=1/48000)
-    plt.plot(freq[500:50000], np.abs(sp[500:50000]))
-    plt.xlabel("Frequency")
-    plt.ylabel("Amplitude")
-    plt.title(title + ' ' + df.columns[2])
+    acc = df[df.columns[0]]
+    lenth = largestpowerof2(len(acc))
+    sp = np.fft.rfft(acc[0:lenth], norm='backward')
+    freq = np.fft.rfftfreq(n=lenth, d=1/48000)
+    fig, ax = plt.subplots()
+    ax.plot(freq[500:50000], np.abs(sp[500:50000]))
+    a = max(sp[500:])
+    f = freq[500 + np.argmax(sp[500:])]
+    ax.annotate('%s'%f, xy=(f, abs(a)), xycoords='data',
+                ha='left', va='bottom', 
+                arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
+    ax.set(xlabel = "Frequency", ylabel = "Amplitude", title=title + ' ' + df.columns[2])
     plt.show()
 
 def fft_test():
@@ -122,7 +135,7 @@ def test_emd():
 
 file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
 df, title = read_data(file_name)
-#fft(df, title)
+fft(df, title)
 #test_emd()
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
