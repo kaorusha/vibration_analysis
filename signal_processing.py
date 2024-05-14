@@ -99,19 +99,29 @@ def largestpowerof2(n:int):
         n &= (n - 1)
     return n
 
-def fft(df:pd.DataFrame, title:str):
-    acc = df[df.columns[0]]
+def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 10, upr_limit = 800, nth_largest = 10, annotate_lwr_limit = 200):
+    acc = df[df.columns[col]]
     lenth = largestpowerof2(len(acc))
-    sp = np.fft.rfft(acc[0:lenth], norm='backward')
-    freq = np.fft.rfftfreq(n=lenth, d=1/48000)
+    sp = np.fft.rfft(acc, n=8192, norm='backward')
+    freq = np.fft.rfftfreq(n=8192, d=1./48000)
     fig, ax = plt.subplots()
-    ax.plot(freq[500:50000], np.abs(sp[500:50000]))
-    a = max(sp[500:])
-    f = freq[500 + np.argmax(sp[500:])]
-    ax.annotate('%s'%f, xy=(f, abs(a)), xycoords='data',
-                ha='left', va='bottom', 
-                arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
-    ax.set(xlabel = "Frequency", ylabel = "Amplitude", title=title + ' ' + df.columns[2])
+    abs_sp = np.abs(sp[lwr_limit:upr_limit])
+    ax.plot(freq[lwr_limit:upr_limit], abs_sp)
+    ax.set(xlabel = "Frequency", ylabel = "Amplitude", title=title + ' ' + df.columns[col])
+    # find top k 
+    top_idx = np.argsort(abs_sp)
+    annotate_dict = {}
+    for idx in top_idx[::-1]:
+        if len(annotate_dict) > nth_largest:
+            break
+        f = int(freq[lwr_limit + idx])
+        if f > annotate_lwr_limit and not(f in annotate_dict):
+            annotate_dict[f] = abs_sp[idx]
+    
+    for f, a in annotate_dict.items():
+        ax.annotate('%s'%f, xy=(f, a), xycoords='data',
+                    ha='left', va='bottom', 
+                    arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
     plt.show()
 
 def fft_test():
@@ -135,7 +145,7 @@ def test_emd():
 
 file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
 df, title = read_data(file_name)
-fft(df, title)
+fft(df, title, 0, nth_largest=30)
 #test_emd()
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
