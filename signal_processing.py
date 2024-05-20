@@ -1,3 +1,5 @@
+import librosa
+from scipy import signal
 import numpy as np
 import openpyxl
 import pandas as pd
@@ -99,28 +101,44 @@ def largestpowerof2(n:int):
         n &= (n - 1)
     return n
 
-def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 10, upr_limit = 800, nth_largest = 10, annotate_lwr_limit = 200):
+def butter_highpass(input, t, cutoff, fs, order = 5, visualize = False):
+    sos = signal.butter(order, cutoff, btype='highpass', fs=fs, output='sos')
+    output = signal.sosfilt(sos, input)
+    if visualize:
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+        ax1.plot(t,input)
+        ax1.set_title('input signal')
+        ax2.plot(t, output)
+        ax2.set_title('After %d hz high-pass filter'%cutoff)
+        ax2.set_xlabel('Time [seconds]')
+        plt.tight_layout()
+        plt.show()
+    return output
+
+def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 200, fs = 48000):
     acc = df[df.columns[col]]
-    lenth = largestpowerof2(len(acc))
-    sp = np.fft.rfft(acc, n=8192, norm='backward')
-    freq = np.fft.rfftfreq(n=8192, d=1./48000)
+    # subtract dc bias from acc data
+    bias = np.mean(acc)
+    # print("acc average = %f" %bias)
+    acc = acc - bias
+    # use high-pass filter to remove dc 
+    filtered_acc = butter_highpass(acc, df.index, 10, fs, 5, False)
+    # do FFT with hanning window frame
+    frame_len = 8192
+    frames = librosa.util.frame(filtered_acc, frame_length=frame_len, hop_length=frame_len//4, axis=0)
+    windowed_frames = np.hanning(frame_len)*frames
+    sp = np.fft.rfft(windowed_frames, n=frame_len, norm='backward')
+    freq = np.fft.rfftfreq(n=frame_len, d=1./fs)
+    # plot spectrum
     fig, ax = plt.subplots()
-    abs_sp = np.abs(sp[lwr_limit:upr_limit])
-    ax.plot(freq[lwr_limit:upr_limit], abs_sp)
-    ax.set(xlabel = "Frequency", ylabel = "Amplitude", title=title + ' ' + df.columns[col])
-    # find top k 
-    top_idx = np.argsort(abs_sp)
-    annotate_dict = {}
-    for idx in top_idx[::-1]:
-        if len(annotate_dict) > nth_largest:
-            break
-        f = int(freq[lwr_limit + idx])
-        if f > annotate_lwr_limit and not(f in annotate_dict):
-            annotate_dict[f] = abs_sp[idx]
-    
-    for f, a in annotate_dict.items():
-        ax.annotate('%s'%f, xy=(f, a), xycoords='data',
-                    ha='left', va='bottom', 
+    abs_sp = np.mean(np.abs(sp), axis=0)
+    ax.plot(freq[lwr_limit:upr_limit], abs_sp[lwr_limit:upr_limit])
+    ax.set(xlabel = "Frequency", ylabel = "Magnitude", yscale="linear", title=title + ' ' + df.columns[col])
+    # analysis the peak and add annotation on the graph 
+    peaks, dic = signal.find_peaks(abs_sp, prominence=abs_sp*0.1)
+    for idx in peaks:
+        ax.annotate('%f'%freq[idx], xy=(freq[idx], abs_sp[idx]),
+                    xycoords='data', ha='left', va='bottom',
                     arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
     plt.show()
 
@@ -145,8 +163,7 @@ def test_emd():
 
 file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
 df, title = read_data(file_name)
-fft(df, title, 0, nth_largest=30)
-#test_emd()
+fft(df, title, 0)
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
