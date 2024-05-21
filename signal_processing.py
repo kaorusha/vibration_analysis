@@ -115,14 +115,14 @@ def butter_highpass(input, t, cutoff, fs, order = 5, visualize = False):
         plt.show()
     return output
 
-def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 200, fs = 48000):
+def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs = 48000):
     acc = df[df.columns[col]]
     # subtract dc bias from acc data
     bias = np.mean(acc)
     # print("acc average = %f" %bias)
     acc = acc - bias
     # use high-pass filter to remove dc 
-    filtered_acc = butter_highpass(acc, df.index, 10, fs, 5, False)
+    filtered_acc = butter_highpass(acc, df.index, 30, fs, 2, False)
     # do FFT with hanning window frame
     frame_len = 8192
     frames = librosa.util.frame(filtered_acc, frame_length=frame_len, hop_length=frame_len//4, axis=0)
@@ -132,13 +132,14 @@ def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 200, fs 
     # plot spectrum
     fig, ax = plt.subplots()
     abs_sp = np.mean(np.abs(sp), axis=0)
-    ax.plot(freq[lwr_limit:upr_limit], abs_sp[lwr_limit:upr_limit])
-    ax.set(xlabel = "Frequency", ylabel = "Magnitude", yscale="linear", title=title + ' ' + df.columns[col])
+    ax.plot(freq, abs_sp)
+    ax.set(xlim = (lwr_limit, upr_limit), xlabel = "Frequency", ylabel = "Magnitude", yscale="linear", title=title + ' ' + df.columns[col])
     # analysis the peak and add annotation on the graph 
-    peaks, dic = signal.find_peaks(abs_sp, prominence=abs_sp*0.1)
+    peaks, dic = signal.find_peaks(abs_sp, prominence=0.1)
     for idx in peaks:
-        ax.annotate('%f'%freq[idx], xy=(freq[idx], abs_sp[idx]),
-                    xycoords='data', ha='left', va='bottom',
+        ax.annotate('%d'%freq[idx], 
+                    xy=(freq[idx], abs_sp[idx]), rotation=45, xycoords='data',
+                    xytext=(0, 30), textcoords='offset pixels',
                     arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
     plt.show()
 
