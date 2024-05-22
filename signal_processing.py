@@ -8,16 +8,19 @@ import emd
 import memd.MEMD_all
 from itertools import islice
 
-def read_data(file_name):
-    workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
-    # print("There are " + str(len(workbook.sheetnames)) + " sheets in this workbook")
-    sheet_name = workbook.sheetnames[0]
+def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:int):
+    """
+    workbook: transfer from head-acoustic data frame (abbreviated as file extension .hdf),
+    with analysis type **Level vs. Time (Fast)**, which is the raw data of accelerometers.
+    :param sheet_name: each sheet as one hdf file. The head-acoustic .hdf file name is at cell 'B5'.
+    :param channel: input signal channel number, for example, the number of accelerometers.
+    """
     record_name = workbook[sheet_name]["B5"].value
     data = workbook[sheet_name].values
     data = list(data)[13:]
-    cols = data[0][1:4]
+    cols = data[0][1:channel+1]
     idx = [r[0] for r in data[1:]]
-    data = (islice(r, 1, 4) for r in data[1:])
+    data = (islice(r, 1, channel+1) for r in data[1:])
     df = pd.DataFrame(data, index=idx, columns=cols)
     print("df shape = (%s , %s)" % df.shape)
     return df, record_name
@@ -116,6 +119,18 @@ def butter_highpass(input, t, cutoff, fs, order = 5, visualize = False):
     return output
 
 def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs = 48000):
+    '''
+    :param title: FFT spectrum titl
+    :param col: specify column of data frame
+    :param lwr_limit, upr_limit: xlim of plot
+    :param fs: sampling frequency
+    ----
+    signal processing step:
+    1. subtract dc bias from accelerometer data
+    2. high pass filter
+    3. do FFT with hanning window frame
+    4. plot mean of FFT spectrum and annotate peaks
+    '''
     acc = df[df.columns[col]]
     # subtract dc bias from acc data
     bias = np.mean(acc)
@@ -133,7 +148,7 @@ def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs
     fig, ax = plt.subplots()
     abs_sp = np.mean(np.abs(sp), axis=0)
     ax.plot(freq, abs_sp)
-    ax.set(xlim = (lwr_limit, upr_limit), xlabel = "Frequency", ylabel = "Magnitude", yscale="linear", title=title + ' ' + df.columns[col])
+    ax.set(xlim = (lwr_limit, upr_limit), xlabel = "Frequency", ylabel = "Amplitude", yscale="linear", title=title + ' ' + df.columns[col])
     # analysis the peak and add annotation on the graph 
     peaks, dic = signal.find_peaks(abs_sp, prominence=0.1)
     for idx in peaks:
@@ -162,9 +177,19 @@ def test_emd():
     print(imfs.shape) # (18, 3, 96000)
     plot_imfs(imfs, t, stopTime_plot = 1, color_list=[color['blue'], color['orange'], color['green']], print_imf=imfs.shape[0]-1)
 
-file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
-df, title = read_data(file_name)
-fft(df, title, 0)
+if __name__ == '__main__':
+    file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
+    workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook( " + file_name + " )")
+    for sheet in workbook.sheetnames:
+        df, title = workbook_to_dataframe(workbook, sheet, 3)
+        for col in df.columns:
+            acc = df.columns[col]
+            rms = np.sqrt(np.mean(acc**2))
+            std = np.std(acc)
+            
+            #fft(df, title, col)
+    workbook.close()
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
