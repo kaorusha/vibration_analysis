@@ -22,7 +22,7 @@ def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:in
     idx = [r[0] for r in data[1:]]
     data = (islice(r, 1, channel+1) for r in data[1:])
     df = pd.DataFrame(data, index=idx, columns=cols)
-    print("df shape = (%s , %s)" % df.shape)
+    print("sheet: " + sheet_name + "\t df shape = (%s , %s)" % df.shape)
     return df, record_name
 
 color = {
@@ -177,19 +177,49 @@ def test_emd():
     print(imfs.shape) # (18, 3, 96000)
     plot_imfs(imfs, t, stopTime_plot = 1, color_list=[color['blue'], color['orange'], color['green']], print_imf=imfs.shape[0]-1)
 
+def calc_rms(df: pd.DataFrame):
+    rms = df.copy()**2
+    rms = rms.mean()**0.5
+    return rms
+
+def stat_calc(df: pd.DataFrame):
+    """
+    calculate accelerate data peak, rms, crest factor and standard deviation
+    """
+    df_stats = pd.concat([df.abs().max(),calc_rms(df)],axis=1)
+    df_stats.columns = ['Acceleration Peak (g)','Acceleration RMS (g)']
+    df_stats['Crest Factor'] = df_stats['Acceleration Peak (g)'] / df_stats['Acceleration RMS (g)']
+    df_stats['Standard Deviation (g)'] = df.std()
+    df_stats.index.name = 'Data Set'
+    return df_stats
+
+def get_psd(df: pd.DataFrame, bin_width, fs = 48000):    
+    f, psd = signal.welch(df.to_numpy(), 
+                          fs=fs, 
+                          nperseg=fs/bin_width,
+                          window='hanning',
+                          axis=0
+                         )
+
+    df_psd = pd.DataFrame(psd,columns=df.columns)
+    df_psd.columns
+    df_psd['Frequency (Hz)'] = f
+    df_psd = df_psd.set_index('Frequency (Hz)')
+    return df_psd[1:] #drop the first value because it makes the plots look bad and is effectively 0
+
 if __name__ == '__main__':
     file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
-    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook( " + file_name + " )")
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + file_name + " )")
+    #df_all_stats = pd.DataFrame()
     for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
-        for col in df.columns:
-            acc = df.columns[col]
-            rms = np.sqrt(np.mean(acc**2))
-            std = np.std(acc)
-            
-            #fft(df, title, col)
+        # rewrite column title adding title
+        df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
+        #df_stats = stat_calc(df)
+        #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
     workbook.close()
+    #df_all_stats.to_excel('state.xlsx')
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
