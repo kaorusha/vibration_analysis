@@ -1,4 +1,6 @@
 import librosa
+from matplotlib import legend
+from matplotlib.mlab import detrend
 from scipy import signal
 import numpy as np
 import openpyxl
@@ -104,9 +106,9 @@ def largestpowerof2(n:int):
         n &= (n - 1)
     return n
 
-def butter_highpass(input, t, cutoff, fs, order = 5, visualize = False):
+def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False):
     sos = signal.butter(order, cutoff, btype='highpass', fs=fs, output='sos')
-    output = signal.sosfilt(sos, input)
+    output = signal.sosfilt(sos, input, axis=axis)
     if visualize:
         fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
         ax1.plot(t,input)
@@ -137,7 +139,7 @@ def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs
     # print("acc average = %f" %bias)
     acc = acc - bias
     # use high-pass filter to remove dc 
-    filtered_acc = butter_highpass(acc, df.index, 30, fs, 2, False)
+    filtered_acc = butter_highpass(acc, df.index, 60, fs, 2, False)
     # do FFT with hanning window frame
     frame_len = 8192
     frames = librosa.util.frame(filtered_acc, frame_length=frame_len, hop_length=frame_len//4, axis=0)
@@ -193,32 +195,32 @@ def stat_calc(df: pd.DataFrame):
     df_stats.index.name = 'Data Set'
     return df_stats
 
-def get_psd(df: pd.DataFrame, bin_width, fs = 48000):    
-    f, psd = signal.welch(df.to_numpy(), 
-                          fs=fs, 
-                          nperseg=fs/bin_width,
-                          window='hanning',
-                          axis=0
-                         )
-
+def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):    
+    filtered_df = butter_highpass(df, df.index, 60, fs, 2)
+    f, psd = signal.welch(filtered_df, fs=fs, nperseg=frame_len, window='hann', noverlap=frame_len*overlap, axis=0)
     df_psd = pd.DataFrame(psd,columns=df.columns)
     df_psd.columns
     df_psd['Frequency (Hz)'] = f
     df_psd = df_psd.set_index('Frequency (Hz)')
-    return df_psd[1:] #drop the first value because it makes the plots look bad and is effectively 0
+    return df_psd #drop the first value because it makes the plots look bad and is effectively 0
 
 if __name__ == '__main__':
     file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + file_name + " )")
     #df_all_stats = pd.DataFrame()
-    for sheet in workbook.sheetnames:
+    for sheet in workbook.sheetnames[:1]:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
         #df_stats = stat_calc(df)
         #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
+        detrend_df = df - np.mean(df.to_numpy(), axis=0)
+        df_psd = get_psd(detrend_df)
+        df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
+        #df_psd.to_excel('state.xlsx', sheet_name='psd')
     workbook.close()
+    plt.show()
     #df_all_stats.to_excel('state.xlsx')
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
