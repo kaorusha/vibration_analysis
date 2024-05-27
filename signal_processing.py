@@ -1,6 +1,7 @@
+from typing import Any
 import librosa
-from matplotlib import legend
-from matplotlib.mlab import detrend
+import matplotlib.axes
+from matplotlib.pylab import det
 from scipy import signal
 import numpy as np
 import openpyxl
@@ -122,7 +123,7 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
 
 def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs = 48000):
     '''
-    :param title: FFT spectrum titl
+    :param title: FFT spectrum title
     :param col: specify column of data frame
     :param lwr_limit, upr_limit: xlim of plot
     :param fs: sampling frequency
@@ -151,14 +152,20 @@ def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs
     abs_sp = np.mean(np.abs(sp), axis=0)
     ax.plot(freq, abs_sp)
     ax.set(xlim = (lwr_limit, upr_limit), xlabel = "Frequency", ylabel = "Amplitude", yscale="linear", title=title + ' ' + df.columns[col])
-    # analysis the peak and add annotation on the graph 
-    peaks, dic = signal.find_peaks(abs_sp, prominence=0.1)
+    return freq, abs_sp, ax
+    
+def annotate_peak(a: np.ndarray, freq: np.ndarray, ax: matplotlib.axes.Axes, prominence:Any|None = None):    
+    """
+    analysis the peak and add annotation on the graph
+    :param a: 1d array spectrum absolute value
+    :param freq: 1d array frequency
+    """
+    peaks, dic = signal.find_peaks(a, prominence=prominence)
     for idx in peaks:
         ax.annotate('%d'%freq[idx], 
-                    xy=(freq[idx], abs_sp[idx]), rotation=45, xycoords='data',
+                    xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
                     xytext=(0, 30), textcoords='offset pixels',
                     arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
-    plt.show()
 
 def fft_test():
     N = 500
@@ -195,14 +202,15 @@ def stat_calc(df: pd.DataFrame):
     df_stats.index.name = 'Data Set'
     return df_stats
 
-def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):    
-    filtered_df = butter_highpass(df, df.index, 60, fs, 2)
+def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
+    detrend_df = df - np.mean(df.to_numpy(), axis=0)
+    filtered_df = butter_highpass(detrend_df, df.index, 60, fs, 2)
     f, psd = signal.welch(filtered_df, fs=fs, nperseg=frame_len, window='hann', noverlap=frame_len*overlap, axis=0)
     df_psd = pd.DataFrame(psd,columns=df.columns)
     df_psd.columns
     df_psd['Frequency (Hz)'] = f
     df_psd = df_psd.set_index('Frequency (Hz)')
-    return df_psd #drop the first value because it makes the plots look bad and is effectively 0
+    return df_psd
 
 if __name__ == '__main__':
     file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
@@ -215,8 +223,7 @@ if __name__ == '__main__':
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
         #df_stats = stat_calc(df)
         #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        detrend_df = df - np.mean(df.to_numpy(), axis=0)
-        df_psd = get_psd(detrend_df)
+        df_psd = get_psd(df)
         df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
         #df_psd.to_excel('state.xlsx', sheet_name='psd')
     workbook.close()
