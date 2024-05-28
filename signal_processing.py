@@ -121,39 +121,41 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
         plt.show()
     return output
 
-def fft(df:pd.DataFrame, title:str, col = 0, lwr_limit = 0, upr_limit = 5000, fs = 48000):
+def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1):
+    """
+    do FFT with hanning window frame
+    """
+    frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
+    window = np.hanning(nperseq)
+    windowed_frames = np.empty(frames.shape)
+    for col in range(frames.shape[-1]):
+        np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
+    sp = np.fft.rfft(windowed_frames, n=nperseq, axis=axis, norm='backward')
+    freq = np.fft.rfftfreq(n=nperseq, d=1./fs)
+    abs_sp = np.mean(np.abs(sp), axis=0)
+    return freq, abs_sp
+
+def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
-    :param title: FFT spectrum title
-    :param col: specify column of data frame
-    :param lwr_limit, upr_limit: xlim of plot
+    return fft as dataframe type
     :param fs: sampling frequency
     ----
     signal processing step:
     1. subtract dc bias from accelerometer data
     2. high pass filter
     3. do FFT with hanning window frame
-    4. plot mean of FFT spectrum and annotate peaks
+    4. get mean of FFT spectrum
     '''
-    acc = df[df.columns[col]]
     # subtract dc bias from acc data
-    bias = np.mean(acc)
-    # print("acc average = %f" %bias)
-    acc = acc - bias
+    detrend_df = df - np.mean(df.to_numpy(), axis=0)
     # use high-pass filter to remove dc 
-    filtered_acc = butter_highpass(acc, df.index, 60, fs, 2, False)
-    # do FFT with hanning window frame
-    frame_len = 8192
-    frames = librosa.util.frame(filtered_acc, frame_length=frame_len, hop_length=frame_len//4, axis=0)
-    windowed_frames = np.hanning(frame_len)*frames
-    sp = np.fft.rfft(windowed_frames, n=frame_len, norm='backward')
-    freq = np.fft.rfftfreq(n=frame_len, d=1./fs)
-    # plot spectrum
-    fig, ax = plt.subplots()
-    abs_sp = np.mean(np.abs(sp), axis=0)
-    ax.plot(freq, abs_sp)
-    ax.set(xlim = (lwr_limit, upr_limit), xlabel = "Frequency", ylabel = "Amplitude", yscale="linear", title=title + ' ' + df.columns[col])
-    return freq, abs_sp, ax
-    
+    filtered_df = butter_highpass(detrend_df, df.index, 60, fs, 2)
+    freq, sp = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
+    df_fft = pd.DataFrame(sp, columns=df.columns)
+    df_fft['Frequency (Hz)'] = freq
+    df_fft = df_fft.set_index('Frequency (Hz)')
+    return df_fft
+
 def annotate_peak(a: np.ndarray, freq: np.ndarray, ax: matplotlib.axes.Axes, prominence:Any|None = None):    
     """
     analysis the peak and add annotation on the graph
@@ -166,16 +168,6 @@ def annotate_peak(a: np.ndarray, freq: np.ndarray, ax: matplotlib.axes.Axes, pro
                     xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
                     xytext=(0, 30), textcoords='offset pixels',
                     arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
-
-def fft_test():
-    N = 500
-    T = 1.0 / 600.0
-    x = np.linspace(0.0, N * T, N)
-    y = np.sin(60.0 * 2.0 * np.pi * x) + 0.5 * np.sin(90.0 * 2.0 * np.pi * x)
-    y_f = np.fft.rfft(y, norm='forward')
-    x_f = np.linspace(0.0, 1.0 / (2.0 * T), N // 2)
-    plt.plot(x_f, np.abs(y_f[:N // 2]))
-    plt.show()
 
 def test_emd():
     t = df.index[:48000]
@@ -223,8 +215,10 @@ if __name__ == '__main__':
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
         #df_stats = stat_calc(df)
         #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        df_psd = get_psd(df)
-        df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
+        df_fft = get_fft(df)
+        df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True)
+        # df_psd = get_psd(df)
+        # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
         #df_psd.to_excel('state.xlsx', sheet_name='psd')
     workbook.close()
     plt.show()
