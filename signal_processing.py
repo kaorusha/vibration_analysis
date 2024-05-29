@@ -156,7 +156,7 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     df_fft = df_fft.set_index('Frequency (Hz)')
     return df_fft
 
-def annotate_peak(a: np.ndarray, freq: np.ndarray, ax: matplotlib.axes.Axes, prominence:Any|None = None):    
+def annotate_peak(a: Any, freq: Any, ax: matplotlib.axes.Axes, prominence:Any|None = None):    
     """
     analysis the peak and add annotation on the graph
     :param a: 1d array spectrum absolute value
@@ -216,7 +216,9 @@ if __name__ == '__main__':
         #df_stats = stat_calc(df)
         #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
         df_fft = get_fft(df)
-        df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True)
+        plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
+        series = df_fft[df_fft.columns[0]].to_numpy()
+        annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
         # df_psd = get_psd(df)
         # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
         #df_psd.to_excel('state.xlsx', sheet_name='psd')
