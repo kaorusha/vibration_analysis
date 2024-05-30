@@ -168,6 +168,7 @@ def annotate_peak(a: Any, freq: Any, ax: matplotlib.axes.Axes, prominence:Any|No
                     xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
                     xytext=(0, 30), textcoords='offset pixels',
                     arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
+    return peaks
 
 def test_emd():
     t = df.index[:48000]
@@ -208,23 +209,23 @@ if __name__ == '__main__':
     file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + file_name + " )")
-    #df_all_stats = pd.DataFrame()
-    for sheet in workbook.sheetnames[:1]:
+    df_all_stats = pd.DataFrame()
+    for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
-        #df_stats = stat_calc(df)
-        #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        df_fft = get_fft(df)
-        plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
-        series = df_fft[df_fft.columns[0]].to_numpy()
-        annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
+        df_stats = stat_calc(df)
+        df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
+        #df_fft = get_fft(df)
+        #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
+        #series = df_fft[df_fft.columns[0]].to_numpy()
+        #peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
         # df_psd = get_psd(df)
         # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
-        #df_psd.to_excel('state.xlsx', sheet_name='psd')
+        # df_psd.to_excel('psd.xlsx', sheet_name='psd')
     workbook.close()
-    plt.show()
-    #df_all_stats.to_excel('state.xlsx')
+    #plt.show()
+    df_all_stats.to_excel('state.xlsx', sheet_name='state')
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
