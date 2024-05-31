@@ -111,14 +111,12 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
     sos = signal.butter(order, cutoff, btype='highpass', fs=fs, output='sos')
     output = signal.sosfilt(sos, input, axis=axis)
     if visualize:
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, layout="tight")
         ax1.plot(t,input)
         ax1.set_title('input signal')
         ax2.plot(t, output)
         ax2.set_title('After %d hz high-pass filter'%cutoff)
         ax2.set_xlabel('Time [seconds]')
-        plt.tight_layout()
-        plt.show()
     return output
 
 def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1):
@@ -156,18 +154,19 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     df_fft = df_fft.set_index('Frequency (Hz)')
     return df_fft
 
-def annotate_peak(a: Any, freq: Any, ax: matplotlib.axes.Axes, prominence:Any|None = None):    
+def annotate_peak(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
     """
     analysis the peak and add annotation on the graph
     :param a: 1d array spectrum absolute value
     :param freq: 1d array frequency
     """
     peaks, dic = signal.find_peaks(a, prominence=prominence)
-    for idx in peaks:
-        ax.annotate('%d'%freq[idx], 
-                    xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
-                    xytext=(0, 30), textcoords='offset pixels',
-                    arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
+    if ax != None:
+        for idx in peaks:
+            ax.annotate('%d'%freq[idx], 
+                        xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
+                        xytext=(0, 30), textcoords='offset pixels',
+                        arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
     return peaks
 
 def test_emd():
@@ -205,27 +204,58 @@ def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     df_psd = df_psd.set_index('Frequency (Hz)')
     return df_psd
 
+def save_bar_plot(name: Any, value:Any, freq:Any):
+    plt.style.use('fivethirtyeight')
+    fig, ax = plt.subplots(layout="constrained", figsize=(10,10))
+    # Horizontal Bar Plot
+    ax.barh(name, value)
+    # Show top values 
+    ax.invert_yaxis()
+    # Add annotation to bars
+    for i in range(len(value)):
+        plt.text(value.iloc[i], i, 
+                 str(round(value.iloc[i], 3)),
+                 fontsize = 10, fontweight ='bold',verticalalignment="center",
+                 color ='grey')
+    
+    # Add Plot Title
+    ax.set_title('%d Hz FFT peak Amplitude'%freq, loc ='left', fontsize=14)
+    fig.savefig('./fig/%d.png'%freq, transparent=False, dpi=80, bbox_inches="tight")
+
 if __name__ == '__main__':
     file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + file_name + " )")
-    df_all_stats = pd.DataFrame()
+    #df_all_stats = pd.DataFrame()
+    df_all_fft = pd.DataFrame()
+    peak_set = set()
     for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
-        df_stats = stat_calc(df)
-        df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        #df_fft = get_fft(df)
+        #df_stats = stat_calc(df)
+        #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
+        df_fft = get_fft(df)
         #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
-        #series = df_fft[df_fft.columns[0]].to_numpy()
-        #peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
+        for col_name in df_fft.columns:
+            series = df_fft[col_name].to_numpy()
+            peak_idxs = annotate_peak(a=series, freq=df_fft.index, prominence=0.25*series)
+            peak_set.update(peak_idxs)
+        df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
         # df_psd = get_psd(df)
         # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
         # df_psd.to_excel('psd.xlsx', sheet_name='psd')
     workbook.close()
-    #plt.show()
-    df_all_stats.to_excel('state.xlsx', sheet_name='state')
+    print("peak numbers: %d"%len(peak_set))
+    for peak in peak_set:
+        freq = df_all_fft.index[peak]
+        save_bar_plot(df_all_fft.columns, df_all_fft.iloc[peak], freq)
+        break
+    
+    # plt.show()
+    #df_all_stats.to_excel('state.xlsx', sheet_name='state')
+    df_all_fft.to_excel('fft.xlsx', sheet_name='fft')
+    
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
