@@ -222,39 +222,69 @@ def save_bar_plot(name: Any, value:Any, freq:Any):
     ax.set_title('%d Hz FFT peak Amplitude'%freq, loc ='left', fontsize=14)
     fig.savefig('./fig/%d.png'%freq, transparent=False, dpi=80, bbox_inches="tight")
 
-if __name__ == '__main__':
-    file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
-    workbook = openpyxl.load_workbook(file_name, read_only=True, data_only=True, keep_links=False)
-    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + file_name + " )")
-    #df_all_stats = pd.DataFrame()
-    df_all_fft = pd.DataFrame()
-    peak_set = set()
+def acc_processing(hdf_level_time_filename:str , 
+                   state: bool = False, state_result_filename:str = 'state.xlsx', 
+                   fft: bool = False, fft_result_filename:str = 'fft.xlsx',
+                   psd: bool = False, psd_result_filename:str = 'psd.xlsx'):
+    """
+    read level vs time acoustic .hdf file, loop for each sheet, read as panda data frame and do selected processing, 
+    save the result of from multiple sheet of raw acc data into one result excel sheet.
+
+    :param state: whether use the data frame to calculate time domain standard deviation etc..
+    :param fft: whether to calculate fast fourier transform
+    :param psd: whether to calculate power spectral density
+    """
+    workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + hdf_level_time_filename + " )")
+    if state:
+        df_all_stats = pd.DataFrame()
+    if fft:
+        df_all_fft = pd.DataFrame()
+    if psd:
+        df_all_psd = pd.DataFrame()
     for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
         df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
-        #df_stats = stat_calc(df)
-        #df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        df_fft = get_fft(df)
-        #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
-        for col_name in df_fft.columns:
-            series = df_fft[col_name].to_numpy()
-            peak_idxs = annotate_peak(a=series, freq=df_fft.index, prominence=0.25*series)
-            peak_set.update(peak_idxs)
-        df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
-        # df_psd = get_psd(df)
-        # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
-        # df_psd.to_excel('psd.xlsx', sheet_name='psd')
+        if state:
+            df_stats = stat_calc(df)
+            df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
+        if fft:
+            df_fft = get_fft(df)
+            #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))        
+            df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
+        if psd:
+            df_psd = get_psd(df)
+            # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
+            df_all_psd = pd.concat([df_all_psd, df_psd], axis=1)
     workbook.close()
+    if state:
+        df_all_stats.to_excel(state_result_filename, sheet_name='state')
+    if fft:
+        df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
+    if psd:
+        df_all_psd.to_excel(psd_result_filename, sheet_name='psd')
+
+def compare_peak_from_fftdataframe(df: pd.DataFrame):
+    peak_set = set()
+    for col_name in df.columns:
+        series = df[col_name].to_numpy()
+        peak_idxs = annotate_peak(a=series, freq=df.index, prominence=0.25*series)
+        peak_set.update(peak_idxs)
     print("peak numbers: %d"%len(peak_set))
+    return peak_set
+
+if __name__ == '__main__':
+    file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
+    #acc_processing(file_name, fft=True)
+    df_fft = pd.read_excel('fft.xlsx', index_col=0, header=0)
+    print(df_fft.head())
+    peak_set = compare_peak_from_fftdataframe(df_fft)
     for peak in peak_set:
-        freq = df_all_fft.index[peak]
-        save_bar_plot(df_all_fft.columns, df_all_fft.iloc[peak], freq)
-        break
-    
-    # plt.show()
-    #df_all_stats.to_excel('state.xlsx', sheet_name='state')
-    df_all_fft.to_excel('fft.xlsx', sheet_name='fft')
+        freq = df_fft.index[peak]
+        if freq < 5000:
+            save_bar_plot(df_fft.columns, df_fft.iloc[peak], freq)
+    #plt.show()
     
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
