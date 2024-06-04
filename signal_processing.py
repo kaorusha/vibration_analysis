@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import emd
 import memd.MEMD_all
 from itertools import islice
+import os
 
 def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:int):
     """
@@ -204,9 +205,9 @@ def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     df_psd = df_psd.set_index('Frequency (Hz)')
     return df_psd
 
-def save_bar_plot(name: Any, value:Any, freq:Any):
+def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:tuple = (10, 10), path_dir:str = './fig/'):
     plt.style.use('fivethirtyeight')
-    fig, ax = plt.subplots(layout="constrained", figsize=(10,10))
+    fig, ax = plt.subplots(layout="constrained", figsize=figsize)
     # Horizontal Bar Plot
     ax.barh(name, value)
     # Show top values 
@@ -219,8 +220,12 @@ def save_bar_plot(name: Any, value:Any, freq:Any):
                  color ='grey')
     
     # Add Plot Title
-    ax.set_title('%d Hz FFT peak Amplitude'%freq, loc ='left', fontsize=14)
-    fig.savefig('./fig/%d.png'%freq, transparent=False, dpi=80, bbox_inches="tight")
+    ax.set_title(plot_title, loc ='left', fontsize=14)
+    # save figure
+    if not os.path.exists(path_dir):
+        print('%s not exist, create new directory.'%path_dir)
+        os.makedirs(path_dir)
+    fig.savefig(path_dir+file_name, transparent=False, dpi=80, bbox_inches="tight")
 
 def acc_processing(hdf_level_time_filename:str , 
                    state: bool = False, state_result_filename:str = 'state.xlsx', 
@@ -275,15 +280,18 @@ def compare_peak_from_fftdataframe(df: pd.DataFrame):
     return peak_set
 
 if __name__ == '__main__':
-    file_name = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
-    #acc_processing(file_name, fft=True)
-    df_fft = pd.read_excel('fft.xlsx', index_col=0, header=0)
-    print(df_fft.head())
+    acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
+    acc_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240201Level_vs_Time.xlsx"
+    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(horizontal)_202402.xls"
+    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(vertical)_202402.xls"
+    #acc_processing(acc_file_v, state=True, fft=True)
+    #df_fft = pd.read_excel('fft.xlsx', index_col=0, header=0)
+    df_fft = pd.read_excel(fft_file_h, skiprows=13, usecols="A:D", index_col=0)
     peak_set = compare_peak_from_fftdataframe(df_fft)
     for peak in peak_set:
         freq = df_fft.index[peak]
         if freq < 5000:
-            save_bar_plot(df_fft.columns, df_fft.iloc[peak], freq)
+            save_bar_plot(df_fft.columns, df_fft.iloc[peak], '%d Hz FFT peak Amplitude'%freq, '%d.png'%freq)
     #plt.show()
     
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
