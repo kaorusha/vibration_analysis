@@ -131,8 +131,8 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
     sp = np.fft.rfft(windowed_frames, n=nperseq, axis=axis, norm='backward')
     freq = np.fft.rfftfreq(n=nperseq, d=1./fs)
-    abs_sp = np.mean(np.abs(sp), axis=0)
-    return freq, abs_sp
+    rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp),2), axis=0))
+    return freq, rms_averaged
 
 def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
@@ -279,19 +279,63 @@ def compare_peak_from_fftdataframe(df: pd.DataFrame):
     print("peak numbers: %d"%len(peak_set))
     return peak_set
 
+def fft_processing(hdf_fft_filename:str):
+    """
+    read acoustic head exported FFT excel file, loop for each sheet, combine as one panda data frame
+    """
+    workbook = openpyxl.load_workbook(hdf_fft_filename, read_only=True, data_only=True, keep_links=False)
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + hdf_fft_filename + " )")
+    df_all_fft = pd.DataFrame()
+    for sheet in workbook.sheetnames:
+        df, title = workbook_to_dataframe(workbook, sheet, 3)
+        # rewrite column title adding title
+        df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
+        df_all_fft = pd.concat([df_all_fft, df], axis=1)
+    workbook.close()
+    return df_all_fft
+
+def class_average(peak_set, df: pd.DataFrame):
+    count = 0
+    no_spring = 0
+    normal = 0
+    bearing_defect = 0
+    for peak in peak_set:
+        freq = df_fft.index[peak]
+        if freq > 5000:
+            continue
+        count += 1
+        print("index = %d"%peak)
+        for col in df.columns:
+            if col[-5] == '2' or col[-5] == '3':
+                no_spring += df[col].iloc[peak]
+                print("no_spring + %d"%df[col].iloc[peak])
+                break
+            elif col[-5] == '5' or col [-5] == '6':
+                normal += df[col].iloc[peak]
+            else:
+                bearing_defect += df[col].iloc[peak]
+    return no_spring/(2*count), normal/(2*count), bearing_defect/(3*count)
+
 if __name__ == '__main__':
     acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     acc_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240201Level_vs_Time.xlsx"
-    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(horizontal)_202402.xls"
-    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(vertical)_202402.xls"
-    #acc_processing(acc_file_v, state=True, fft=True)
-    #df_fft = pd.read_excel('fft.xlsx', index_col=0, header=0)
-    df_fft = pd.read_excel(fft_file_h, skiprows=13, usecols="A:D", index_col=0)
-    peak_set = compare_peak_from_fftdataframe(df_fft)
-    for peak in peak_set:
-        freq = df_fft.index[peak]
-        if freq < 5000:
-            save_bar_plot(df_fft.columns, df_fft.iloc[peak], '%d Hz FFT peak Amplitude'%freq, '%d.png'%freq)
+    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(horizontal)_202402.xlsx"
+    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(vertical)_202402.xlsx"
+    #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
+    df_fft = pd.read_excel('fft_h.xlsx', index_col=0, header=0)
+    df_corr = df_fft.corr()
+    df_corr.to_excel("corr_h.xlsx")
+
+    #df_fft = fft_processing(fft_file_h)
+    #peak_set = compare_peak_from_fftdataframe(df_fft)
+    #series = df_fft[df_fft.columns[0]].to_numpy()
+    #plot = df_fft.plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
+    #peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
+    #for peak in peak_set:
+    #    freq = df_fft.index[peak]
+    #    if freq > 5000:
+    #        continue
+    #    save_bar_plot(df_fft.columns, df_fft.iloc[peak], '%d Hz FFT peak Amplitude'%freq, '%d.png'%freq)   
     #plt.show()
     
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
