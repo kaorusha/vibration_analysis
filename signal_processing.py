@@ -26,7 +26,7 @@ def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:in
     idx = [r[0] for r in data[1:]]
     data = (islice(r, 1, channel+1) for r in data[1:])
     df = pd.DataFrame(data, index=idx, columns=cols)
-    print("sheet: " + sheet_name + "\t df shape = (%s , %s)" % df.shape)
+    #print("sheet: " + sheet_name + "\t df shape = (%s , %s)" % df.shape)
     return df, record_name
 
 color = {
@@ -250,7 +250,7 @@ def acc_processing(hdf_level_time_filename:str ,
     for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
-        df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
+        df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
         if state:
             df_stats = stat_calc(df)
             df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
@@ -271,13 +271,20 @@ def acc_processing(hdf_level_time_filename:str ,
         df_all_psd.to_excel(psd_result_filename, sheet_name='psd')
 
 def compare_peak_from_fftdataframe(df: pd.DataFrame):
-    peak_set = set()
+    peak_dict = {}
     for col_name in df.columns:
         series = df[col_name].to_numpy()
         peak_idxs = annotate_peak(a=series, freq=df.index, prominence=0.25*series)
-        peak_set.update(peak_idxs)
-    print("peak numbers: %d"%len(peak_set))
-    return peak_set
+        update_peak_dic(peak_dict, peak_idxs)
+    print("peak numbers: %d"%len(peak_dict.keys()))
+    return peak_dict
+
+def update_peak_dic(dic:dict, idxs:list[int]):
+    for key in idxs:
+        if key in dic.keys():
+            dic[key] += 1
+        else:
+            dic[key] = 1
 
 def fft_processing(hdf_fft_filename:str):
     """
@@ -289,32 +296,22 @@ def fft_processing(hdf_fft_filename:str):
     for sheet in workbook.sheetnames:
         df, title = workbook_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
-        df.rename(columns=lambda x: x[4:] + '_' + title[15:22], inplace=True)
+        df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
         df_all_fft = pd.concat([df_all_fft, df], axis=1)
     workbook.close()
     return df_all_fft
 
-def class_average(peak_set, df: pd.DataFrame):
-    count = 0
-    no_spring = 0
-    normal = 0
-    bearing_defect = 0
-    for peak in peak_set:
+def class_average_peak(peak_dic:dict, df: pd.DataFrame):
+    idx_list = []
+    for peak in peak_dic:
         freq = df_fft.index[peak]
         if freq > 5000:
             continue
-        count += 1
-        print("index = %d"%peak)
-        for col in df.columns:
-            if col[-5] == '2' or col[-5] == '3':
-                no_spring += df[col].iloc[peak]
-                print("no_spring + %d"%df[col].iloc[peak])
-                break
-            elif col[-5] == '5' or col [-5] == '6':
-                normal += df[col].iloc[peak]
-            else:
-                bearing_defect += df[col].iloc[peak]
-    return no_spring/(2*count), normal/(2*count), bearing_defect/(3*count)
+        if peak_dic.get(peak) < 2:
+            continue
+        idx_list.append(peak)
+
+    return df.iloc[idx_list].mean()
 
 if __name__ == '__main__':
     acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
@@ -322,12 +319,10 @@ if __name__ == '__main__':
     fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(horizontal)_202402.xlsx"
     fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(vertical)_202402.xlsx"
     #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
-    df_fft = pd.read_excel('fft_h.xlsx', index_col=0, header=0)
-    df_corr = df_fft.corr()
-    df_corr.to_excel("corr_h.xlsx")
-
-    #df_fft = fft_processing(fft_file_h)
-    #peak_set = compare_peak_from_fftdataframe(df_fft)
+    df_fft = fft_processing(fft_file_v)
+    #df_fft = pd.read_excel('fft_v.xlsx', index_col=0, header=0)
+    peak_dict = compare_peak_from_fftdataframe(df_fft)
+    print(class_average_peak(peak_dict, df_fft))
     #series = df_fft[df_fft.columns[0]].to_numpy()
     #plot = df_fft.plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
     #peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
