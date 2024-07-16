@@ -19,5 +19,5 @@ with nidaqmx.Task() as task:
     print('acquire time: {}'.format(t2 - t1))
     df = pd.DataFrame({'up':data[0], 'down':data[1], 'axial':data[2], 'fg':data[3]})
     df.plot(title='acc data', xlabel='time(sec)', ylabel='g')
-    df.to_excel('../002577_ud.xlsx', sheet_name='acc_data')
+    df.to_excel('../002577_ud.xlsx', sheet_name='acc_data', index=False)
     plt.show()
