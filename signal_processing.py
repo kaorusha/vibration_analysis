@@ -313,25 +313,81 @@ def class_average_peak(peak_dic:dict, df: pd.DataFrame):
 
     return df.iloc[idx_list].mean()
 
+def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
+    '''
+    return fft as dataframe type
+    :param fs: sampling frequency
+    ----
+    signal processing step:
+    1. subtract dc bias from accelerometer data
+    2. do FFT with hanning window frame
+    3. get mean of FFT spectrum
+    '''
+    # subtract dc bias from acc data
+    detrend_df = df - np.mean(df.to_numpy(), axis=0)
+    freq, sp = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
+    df_fft = pd.DataFrame(sp, columns=df.columns)
+    df_fft['Frequency (Hz)'] = freq
+    df_fft = df_fft.set_index('Frequency (Hz)')
+    return df_fft
+
+def acc_processing_ver2(dir:str, 
+                        state: bool = False, state_result_filename:str = 'state.xlsx', 
+                        fft: bool = False, fft_result_filename:str = 'fft.xlsx'):
+    """
+    read level vs time .xlsx file, loop for each file in the directory, read as panda data frame and do selected processing, 
+    save the result of from multiple file of raw acc data into one result excel sheet.
+
+    :param state: whether use the data frame to calculate time domain standard deviation etc..
+    :param fft: whether to calculate fast fourier transform
+    """
+    if state:
+        df_all_stats = pd.DataFrame()
+    if fft:
+        df_all_fft = pd.DataFrame()
+    for file_name in os.listdir(dir):
+        if file_name.endswith('.xlsx'):
+            df = pd.read_excel(dir+file_name, index_col=0, header=0)
+            print("read excel %s"%file_name)
+            #df.rename(columns=lambda x: file_name[0:9] + '_' + x, inplace=True)
+            if state:
+                df_stats = stat_calc(df)
+                df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
+            if fft:
+                df_fft = get_fft_wo_filtering(df, fs=51200)
+                df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
+    
+    if state:
+        df_all_stats.to_excel(state_result_filename, sheet_name='state')
+    if fft:
+        df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
+
+def savefftplot(fft_file_name:str, save_dir:str, total_samples:int):
+    '''
+    excel file: each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
+    which is left/right/axile/fg/up/down/axile/fg, fg signal will not be shown in the figure, so the cols = [0,1,2,4,5,6]
+    '''
+    df_fft = pd.read_excel(fft_file_name, header=0)
+    for n in range(0,total_samples):
+        series = df_fft[df_fft.columns[8*n]].to_numpy()
+        cols = [8*n,8*n+1,8*n+2,8*n+4,8*n+5,8*n+6]
+        ax = df_fft.iloc[:, cols].plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000), layout="constrained",figsize=(10,10))
+        peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=ax, prominence=0.25*series)
+        plt.savefig(acc_file_dir+df_fft.columns[8*n][:6], transparent=False, dpi=80, bbox_inches="tight")
+        plt.show()
+
 if __name__ == '__main__':
     acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     acc_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240201Level_vs_Time.xlsx"
-    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(horizontal)_202402.xlsx"
-    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\fft(vertical)_202402.xlsx"
+    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(horizontal)_202402.xlsx"
+    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(vertical)_202402.xlsx"
+    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\"
     #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
-    df_fft = fft_processing(fft_file_v)
-    #df_fft = pd.read_excel('fft_v.xlsx', index_col=0, header=0)
-    peak_dict = compare_peak_from_fftdataframe(df_fft)
-    print(class_average_peak(peak_dict, df_fft))
-    #series = df_fft[df_fft.columns[0]].to_numpy()
-    #plot = df_fft.plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))
-    #peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=plot, prominence=0.25*series)
-    #for peak in peak_set:
-    #    freq = df_fft.index[peak]
-    #    if freq > 5000:
-    #        continue
-    #    save_bar_plot(df_fft.columns, df_fft.iloc[peak], '%d Hz FFT peak Amplitude'%freq, '%d.png'%freq)   
-    #plt.show()
+    #acc_processing_ver2(acc_file_dir, False, 'state_defect_samples.xlsx', True, 'fft_defect_samples.xlsx')
+    #df_fft = fft_processing(fft_file_v)
+    df_fft = pd.read_excel('fft_defect_samples.xlsx', header=0)
+    #peak_dict = compare_peak_from_fftdataframe(df_fft)
+    #print(class_average_peak(peak_dict, df_fft))
     
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
