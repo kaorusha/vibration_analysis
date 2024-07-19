@@ -362,13 +362,13 @@ def acc_processing_ver2(dir:str,
     if fft:
         df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
 
-def savefftplot(fft_file_name:str, save_dir:str, total_samples:int):
+def savefftplot(fft_file_name:str, save_dir:str):
     '''
-    excel file: each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
+    :param fft_file_name: excel file, each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
     which is left/right/axile/fg/up/down/axile/fg, fg signal will not be shown in the figure, so the cols = [0,1,2,4,5,6]
     '''
-    df_fft = pd.read_excel(fft_file_name, header=0)
-    for n in range(0,total_samples):
+    df_fft = pd.read_excel(fft_file_name, index_col=0, header=0)
+    for n in range(0,len(df_fft.columns)/8):
         series = df_fft[df_fft.columns[8*n]].to_numpy()
         cols = [8*n,8*n+1,8*n+2,8*n+4,8*n+5,8*n+6]
         ax = df_fft.iloc[:, cols].plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000), layout="constrained",figsize=(10,10))
@@ -385,7 +385,9 @@ if __name__ == '__main__':
     #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
     #acc_processing_ver2(acc_file_dir, False, 'state_defect_samples.xlsx', True, 'fft_defect_samples.xlsx')
     #df_fft = fft_processing(fft_file_v)
-    df_fft = pd.read_excel('fft_defect_samples.xlsx', header=0)
+    df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
+    # test bearing fault frequencies annotation
+    
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
     
