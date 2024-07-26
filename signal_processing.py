@@ -1,7 +1,7 @@
 from typing import Any
+from typing import Literal
 import librosa
 import matplotlib.axes
-from matplotlib.pylab import det
 from scipy import signal
 import numpy as np
 import openpyxl
@@ -155,7 +155,7 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     df_fft = df_fft.set_index('Frequency (Hz)')
     return df_fft
 
-def annotate_peak(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
+def annotatePeaks(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
     """
     analysis the peak and add annotation on the graph
     :param a: 1d array spectrum absolute value
@@ -274,7 +274,7 @@ def compare_peak_from_fftdataframe(df: pd.DataFrame):
     peak_dict = {}
     for col_name in df.columns:
         series = df[col_name].to_numpy()
-        peak_idxs = annotate_peak(a=series, freq=df.index, prominence=0.25*series)
+        peak_idxs = annotatePeaks(a=series, freq=df.index, prominence=0.25*series)
         update_peak_dic(peak_dict, peak_idxs)
     print("peak numbers: %d"%len(peak_dict.keys()))
     return peak_dict
@@ -362,19 +362,168 @@ def acc_processing_ver2(dir:str,
     if fft:
         df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
 
-def savefftplot(fft_file_name:str, save_dir:str):
+def savefftplot(df_fft:pd.DataFrame, sample:list, annotate_peaks:bool, annotate_bends:bool, save_fig:bool, save_dir:str):
     '''
-    :param fft_file_name: excel file, each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
+    show or save a fft plot of selected sample numbers
+
+    parameters
+    ------
+    df_fft: each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
     which is left/right/axile/fg/up/down/axile/fg, fg signal will not be shown in the figure, so the cols = [0,1,2,4,5,6]
+    sample: the selected sample number to show or save the picture, array of integer
+    annotate_peaks: True to annotate peaks of fft spectrum
+    annotate_bends: True to annotate frequency bends
+    save_fig: True to save the fig 
+    save_dir: save the figure to this directory
     '''
-    df_fft = pd.read_excel(fft_file_name, index_col=0, header=0)
-    for n in range(0,len(df_fft.columns)/8):
+    for n in sample:
         series = df_fft[df_fft.columns[8*n]].to_numpy()
         cols = [8*n,8*n+1,8*n+2,8*n+4,8*n+5,8*n+6]
         ax = df_fft.iloc[:, cols].plot(title="FFT ", xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000), layout="constrained",figsize=(10,10))
-        peak_idxs = annotate_peak(a=series, freq=df_fft.index, ax=ax, prominence=0.25*series)
-        plt.savefig(acc_file_dir+df_fft.columns[8*n][:6], transparent=False, dpi=80, bbox_inches="tight")
+        if annotate_peaks:
+            peak_idxs = annotatePeaks(a=series, freq=df_fft.index, ax=ax, prominence=0.25*series)
+        if annotate_bends:
+            fb0 = bearingFaultBands(rotationSpeed(df_fft, n), 6, 1.5875, 5.645, 0, width=0.1)
+            annotateFreqBands(ax, fb0, df_fft.index)
+        if save_fig:
+            plt.savefig(save_dir+df_fft.columns[8*n][:6], transparent=False, dpi=80, bbox_inches="tight")
         plt.show()
+
+class BearingFaultBands:
+    class Info:
+        def __init__(self):
+            self.Centers = []
+            self.Labels = []
+            self.FaultGroups = []
+        def __str__(self):
+            return "Centers: %s,\nLabels: %s,\nFaultGroups: %s"%(self.Centers, self.Labels, self.FaultGroups)
+    def __init__(self):
+        self.fault_bands = np.ndarray([], dtype=float)
+        self.info = BearingFaultBands.Info()
+    
+    def __str__(self):
+        print('fault bands = \n%s'%self.fault_bands)
+        print('info = struct with fields: \n%s'%self.info)
+        return ''
+        
+    def insertDict(self, info_insert:list):
+        self.info.Centers.append(info_insert[0])
+        self.info.Labels.append(info_insert[1])
+        self.info.FaultGroups.append(info_insert[2])
+    
+    def countWidth(self, width: float):
+        fault_bands_list = []
+        for i in self.info.Centers:
+            fault_bands_list.append([i - width, i + width])
+        self.fault_bands = np.array(fault_bands_list)
+    
+    def countDomain(self,fr:float, domain:Literal["frequency", "order"] = "frequency"):
+        self.info.Centers = np.array(self.info.Centers)
+        if domain == "frequency":
+            self.info.Centers *= fr
+            self.fault_bands *= fr
+
+def bearingFaultBands(fr:float, nb:int, db:float, dp:float, beta:float, harmonics = [1], sidebands = [0], width:float = 0.1, domain:Literal["frequency", "order"] = "frequency"):
+    '''
+    https://www.mathworks.com/help/predmaint/ref/bearingfaultbands.html
+    the calculation is based on fixed outer race with rotating inner race
+    
+    parameters
+    ----------
+    fr: Rotational speed of the shaft or inner race
+    nb: Number of balls or rollers
+    db: Diameter of the ball or roller
+    dp: Pitch diameter
+    beta: Contact angle in degree
+    harmonics: harmonics of the fundamental frequency to be included
+    1 (default) | vector of positive integers
+    Sidebands: Sidebands around the fundamental frequency and its harmonics to be included
+    0 (default) | vector of nonnegative integers
+    width: width of the frequency bands centered at the nominal fault frequencies
+    domain: units of the fault band frequencies
+            'frequency': hz
+            'order': relative to the inner race rotation, fr.
+    
+    output
+    ------
+    ### fb - Fault frequency bands, returned as an N-by-2 array, where N is the number of fault frequencies. 
+    FB is returned in the same units as FR, in either hertz or orders depending on the value of 'Domain'. 
+    Use the generated fault frequency bands to extract spectral metrics using faultBandMetrics. 
+    The generated fault bands are centered at:
+    * Outer race defect frequency, Fo, and its harmonics
+    * Inner race defect frequency, Fi, its harmonics and sidebands at FR
+    * Rolling element (ball) defect frequency, Fbits harmonics and sidebands at Fc
+    * Cage (train) defect frequency, Fc and its harmonics
+    The value W is the width of the frequency bands, which you can specify using the 'Width' name-value pair.
+    ### Info - Information about the fault frequency bands in FB, returned as a structure with the following fields:
+    * Centers — Center fault frequencies
+    * Labels — Labels describing each frequency
+    * FaultGroups — Fault group numbers identifying related fault frequencies
+    '''
+    alpha = np.cos(beta * np.pi / 180)
+    Fc_order = 0.5 * (1 - db/dp * alpha)
+    Fb_order = 0.5 * (dp/db - db/dp * alpha**2)
+    Fo_order = nb * Fc_order
+    Fi_order = nb * (1 - Fc_order)
+    res = BearingFaultBands()
+    for i in harmonics:
+        res.insertDict([Fo_order * i, '%dFo'%i, 1])
+        for j in sidebands:
+            fi = Fi_order * i
+            fb = Fb_order * i
+            if j > 0:
+                res.insertDict([fi - j,             '%dFi-%dFr'%(i,j), 2])
+            res.insertDict([    fi,                 '%dFi'%i,          2])
+            if j > 0:
+                res.insertDict([fi + j,             '%dFi+%dFr'%(i,j), 2])
+                res.insertDict([fb - j * Fc_order,  '%dFb-%dFc'%(i,j), 3])
+            res.insertDict([    fb,                 '%dFb'%i,          3])
+            if j > 0:
+                res.insertDict([fb + j * Fc_order,  '%dFb+%dFc'%(i,j), 3])
+        res.insertDict([Fc_order * i, '%dFc'%i, 4])
+    res.countWidth(width)
+    res.countDomain(fr, domain)
+    return res
+
+def rotationSpeed(df_fft: pd.DataFrame, sample_no:int):
+    speed_lr = df_fft.iloc[:,sample_no * 8 + 3].idxmax() * 0.5
+    speed_ud = df_fft.iloc[:,sample_no * 8 + 7].idxmax() * 0.5
+    return (speed_lr + speed_ud) / 2
+
+def binary_search(arr, low, high, x):
+    '''
+    
+    '''
+    if high >= low:
+        mid = (high + low) // 2
+        if arr[mid] == x:
+            return mid
+        elif arr[mid] > x:
+            return binary_search(arr, low, mid - 1, x)
+        else:
+            return binary_search(arr, mid + 1, high, x)
+    else:
+        return low
+
+def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
+    '''
+    Annotate bearing frequency bands in different color based on its fault group.
+    
+    parameters
+    -------
+    axes: subplots for annotation
+    fb: bearing fault bands
+    x: x-axis of subplots, which is the index of frequency spectrum
+    '''
+    length = len(x)
+    color_arr = ['red', 'yellow', 'green', 'blue']
+    for (x1, x2), g, s in zip(fb.fault_bands, fb.info.FaultGroups, fb.info.Labels):
+        mask_arr = np.zeros(length)
+        mask_arr[binary_search(x, 0, length - 1, x1):binary_search(x, 0, length - 1, x2)] = 1
+        axes.fill_between(x, 0, 1, where= mask_arr, color= color_arr[g-1], alpha=0.25, transform=axes.get_xaxis_transform())
+        axes.annotate(s, xy=(x1, 0.88), xycoords=('data', 'subfigure fraction'), rotation='vertical', verticalalignment='top')
+    axes.annotate('Cage defect frequency, Fc\nBall defect frequency, Fb\nOuter race defect frequency, Fo\nInner race defect frequency, Fi\n',
+                  xy=(0.89, 0.11), xycoords='subfigure fraction', horizontalalignment='right')
 
 if __name__ == '__main__':
     acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
@@ -386,11 +535,10 @@ if __name__ == '__main__':
     #acc_processing_ver2(acc_file_dir, False, 'state_defect_samples.xlsx', True, 'fft_defect_samples.xlsx')
     #df_fft = fft_processing(fft_file_v)
     df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
-    # test bearing fault frequencies annotation
-    
+    savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
-    
+
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
