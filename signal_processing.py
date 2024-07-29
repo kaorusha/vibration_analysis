@@ -301,7 +301,7 @@ def fft_processing(hdf_fft_filename:str):
     workbook.close()
     return df_all_fft
 
-def class_average_peak(peak_dic:dict, df: pd.DataFrame):
+def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
     idx_list = []
     for peak in peak_dic:
         freq = df_fft.index[peak]
@@ -311,7 +311,7 @@ def class_average_peak(peak_dic:dict, df: pd.DataFrame):
             continue
         idx_list.append(peak)
 
-    return df.iloc[idx_list].mean()
+    return df_fft.iloc[idx_list].mean()
 
 def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
@@ -347,7 +347,7 @@ def acc_processing_ver2(dir:str,
         df_all_fft = pd.DataFrame()
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx'):
-            df = pd.read_excel(dir+file_name, index_col=0, header=0)
+            df = pd.read_excel(dir+file_name, header=0)
             print("read excel %s"%file_name)
             #df.rename(columns=lambda x: file_name[0:9] + '_' + x, inplace=True)
             if state:
@@ -524,18 +524,50 @@ def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
         axes.annotate(s, xy=(x1, 0.88), xycoords=('data', 'subfigure fraction'), rotation='vertical', verticalalignment='top')
     axes.annotate('Cage defect frequency, Fc\nBall defect frequency, Fb\nOuter race defect frequency, Fo\nInner race defect frequency, Fi\n',
                   xy=(0.89, 0.11), xycoords='subfigure fraction', horizontalalignment='right')
+    
+def techometer(fg_signal: np.ndarray, thereshold:float, fs:int, pulse_per_round: int):
+    '''
+    parameters
+    ------
+    fg_signal: square wave signal array
+    thereshold: count for rising edge
+    fs: smapling frequency
+    pulse_per_round: pulse numbers per round, used for rotation speed calculation
+    
+    returns
+    ------
+    rotating speed rps= round per second (hz)
+    '''
+    state = False
+    delta = 0
+    rps = pd.Series(np.zeros(len(fg_signal)))
+    time_buffer = fs/200
+    for i in range(1, len(fg_signal), 1):
+        delta += 1
+        if fg_signal[i] > thereshold and state == False:
+            # preventing zero as denominator
+            if (i < time_buffer):
+                continue
+            rps[i] = fs / (delta * pulse_per_round)
+            delta = 0
+            state = True
+        else:
+            rps[i] = rps[i - 1]
+            if fg_signal[i] < thereshold:
+                state = False
+    return rps
 
 if __name__ == '__main__':
     acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
     acc_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240201Level_vs_Time.xlsx"
     fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(horizontal)_202402.xlsx"
     fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(vertical)_202402.xlsx"
-    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\"
+    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\acc_data\\"
     #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
     #acc_processing_ver2(acc_file_dir, False, 'state_defect_samples.xlsx', True, 'fft_defect_samples.xlsx')
     #df_fft = fft_processing(fft_file_v)
-    df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
-    savefftplot(df_fft, [0], False, True, False, acc_file_dir)
+    #df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
+    #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
 
