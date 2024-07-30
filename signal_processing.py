@@ -525,7 +525,7 @@ def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
     axes.annotate('Cage defect frequency, Fc\nBall defect frequency, Fb\nOuter race defect frequency, Fo\nInner race defect frequency, Fi\n',
                   xy=(0.89, 0.11), xycoords='subfigure fraction', horizontalalignment='right')
     
-def techometer(fg_signal: np.ndarray, thereshold:float, fs:int, pulse_per_round: int):
+def techometer(fg_signal: pd.DataFrame, thereshold:float, fs:int, pulse_per_round: int):
     '''
     parameters
     ------
@@ -555,6 +555,29 @@ def techometer(fg_signal: np.ndarray, thereshold:float, fs:int, pulse_per_round:
             rps[i] = rps[i - 1]
             if fg_signal[i] < thereshold:
                 state = False
+    return rps
+
+def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
+    '''
+    use fg signal to get the fft and find the rotation speed in hz
+    '''
+    detrend_df = fg_signal - np.mean(fg_signal.to_numpy(), axis=0)
+    frames = librosa.util.frame(detrend_df, frame_length=nperseq, hop_length=int(nperseq-noverlap))
+    window = np.hanning(nperseq)
+    windowed_frames = np.empty(frames.shape)
+    for col in range(frames.shape[-1]):
+        np.multiply(window, frames[:,col], out=windowed_frames[:,col])
+    sp = np.fft.rfft(windowed_frames, n=nperseq, norm='backward', axis=0)
+    freq = np.fft.rfftfreq(n=nperseq, d=1./fs)
+    rps = pd.Series(np.zeros(len(fg_signal)))
+    idx = np.argmax(np.abs(sp), axis=0)
+    hop_lenth = int(nperseq - noverlap)
+    start = 0
+    for i in idx:
+        rps[start:start + hop_lenth] = freq[i]/2
+        start += hop_lenth
+    # ending samples
+    rps[start:] = rps[start - 1]    
     return rps
 
 if __name__ == '__main__':
