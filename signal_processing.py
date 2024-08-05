@@ -120,19 +120,56 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
         ax2.set_xlabel('Time [seconds]')
     return output
 
-def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1):
+def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
+        domain:Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round=2):
     """
     do FFT with hanning window frame
+    
+    param
+    -----
+    df: input acc data, each column represents a sequence signal of accelerometers, and the last column is the fg sensor.
+    fs: sampling frequency
+    nperseq: number of samples of each window frame
+    noverlap: overlapping samples
+    axis: rfft along windowed frame data axis, the shape of windowed frame is [number of frames, nperseq, columns number of input df]
+    domain: units of the spectrum x labels
+            'frequency': hz
+            'order': relative to the inner race rotation, fr.
+    fg_column: the last column number of input data frame
+    pulse_per_round: fg sensor pulse numbers per round
     """
     frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
     window = np.hanning(nperseq)
-    windowed_frames = np.empty(frames.shape)
+    windowed_frames = np.empty(frames.shape) # frane,shape = [frame_numbers, frame_length, columns_dataframe]
     for col in range(frames.shape[-1]):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
     sp = np.fft.rfft(windowed_frames, n=nperseq, axis=axis, norm='backward')
     freq = np.fft.rfftfreq(n=nperseq, d=1./fs)
-    rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp),2), axis=0))
-    return freq, rms_averaged
+    if domain == 'frequency':
+        rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp),2), axis=0))
+        sp_rms = pd.DataFrame(data=rms_averaged, columns=df.columns)
+        sp_rms['Frequency (Hz)'] = freq
+        sp_rms.set_index('Frequency (Hz)', inplace=True)
+        return sp_rms
+    if domain == 'order':
+        # the rotating freq of each frame
+        idx = np.argmax(np.abs(sp[:, :, 3]), axis=1)
+        sp_dict = {}
+        for i in range(len(idx)):
+            rps = freq[idx[i]]/pulse_per_round
+            keys = freq/rps
+            for j in range(len(keys)):
+                if keys[j] in sp_dict:
+                    sp_dict[keys[j]] = np.vstack([sp_dict[keys[j]],sp[i,j, :3]])
+                else:
+                    sp_dict.update({keys[j]: np.array(sp[i,j, :3])})
+        print('There a %d order number as indexing'%len(sp_dict.keys()))
+        sp_rms = pd.DataFrame(columns=df.columns[:fg_column])
+        for key in sp_dict.keys():
+            rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp_dict[key]),2), axis=0))
+            sp_rms.loc[key] = rms_averaged
+        sp_rms.sort_index(inplace=True)
+        return sp_rms
 
 def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
@@ -149,10 +186,7 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
     # use high-pass filter to remove dc 
     filtered_df = butter_highpass(detrend_df, df.index, 60, fs, 2)
-    freq, sp = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
-    df_fft = pd.DataFrame(sp, columns=df.columns)
-    df_fft['Frequency (Hz)'] = freq
-    df_fft = df_fft.set_index('Frequency (Hz)')
+    df_fft = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
     return df_fft
 
 def annotatePeaks(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
@@ -313,7 +347,8 @@ def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
 
     return df_fft.iloc[idx_list].mean()
 
-def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
+def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75, 
+                         domain=Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 3):
     '''
     return fft as dataframe type
     :param fs: sampling frequency
@@ -325,10 +360,7 @@ def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap =
     '''
     # subtract dc bias from acc data
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
-    freq, sp = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
-    df_fft = pd.DataFrame(sp, columns=df.columns)
-    df_fft['Frequency (Hz)'] = freq
-    df_fft = df_fft.set_index('Frequency (Hz)')
+    df_fft = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap, domain=domain, fg_column=fg_column, pulse_per_round=pulse_per_round)
     return df_fft
 
 def acc_processing_ver2(dir:str, 
@@ -430,7 +462,7 @@ def bearingFaultBands(fr:float, nb:int, db:float, dp:float, beta:float, harmonic
     
     parameters
     ----------
-    fr: Rotational speed of the shaft or inner race
+    fr: Rotational speed of the shaft or inner race, this parameter is used if the domain is 'frequency'.
     nb: Number of balls or rollers
     db: Diameter of the ball or roller
     dp: Pitch diameter
@@ -508,6 +540,7 @@ def binary_search(arr, low, high, x):
 def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
     '''
     Annotate bearing frequency bands in different color based on its fault group.
+    Note: the input axes should use constrained layout
     
     parameters
     -------
@@ -521,9 +554,9 @@ def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
         mask_arr = np.zeros(length)
         mask_arr[binary_search(x, 0, length - 1, x1):binary_search(x, 0, length - 1, x2)] = 1
         axes.fill_between(x, 0, 1, where= mask_arr, color= color_arr[g-1], alpha=0.25, transform=axes.get_xaxis_transform())
-        axes.annotate(s, xy=(x1, 0.88), xycoords=('data', 'subfigure fraction'), rotation='vertical', verticalalignment='top')
+        axes.annotate(s, xy=(x1, 0.95), xycoords=('data', 'subfigure fraction'), rotation='vertical', verticalalignment='top')
     axes.annotate('Cage defect frequency, Fc\nBall defect frequency, Fb\nOuter race defect frequency, Fo\nInner race defect frequency, Fi\n',
-                  xy=(0.89, 0.11), xycoords='subfigure fraction', horizontalalignment='right')
+                  xy=(0.95, 0.05), xycoords='subfigure fraction', horizontalalignment='right')
     
 def techometer(fg_signal: pd.DataFrame, thereshold:float, fs:int, pulse_per_round: int):
     '''
@@ -593,6 +626,12 @@ if __name__ == '__main__':
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
+    df_fft = pd.read_excel('sp_rms.xlsx', header=0, index_col=0)
+    fig, ax = plt.subplots(layout='constrained')
+    df_fft.plot(logx=True, title='ordered frequency spectrum', xlabel='order of rotation speed', ylabel='Amplitude', logy=True, ax=ax)
+    fb = bearingFaultBands(fr=1, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 6), domain='order')
+    annotateFreqBands(ax, fb, df_fft.index)
+    plt.show()
 
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
