@@ -1,5 +1,6 @@
 from typing import Any
 from typing import Literal
+from xml import dom
 import librosa
 import matplotlib.axes
 from scipy import signal
@@ -169,6 +170,7 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
             rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp_dict[key]),2), axis=0))
             sp_rms.loc[key] = rms_averaged
         sp_rms.sort_index(inplace=True)
+        sp_rms.index.rename('order of rotating frequency', inplace=True)
         return sp_rms
 
 def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
@@ -348,10 +350,16 @@ def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
     return df_fft.iloc[idx_list].mean()
 
 def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75, 
-                         domain=Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 3):
+                         domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2):
     '''
     return fft as dataframe type
-    :param fs: sampling frequency
+    
+    parameters
+    -----
+    fs: sampling frequency
+    domain: units of the spectrum x labels
+            'frequency': hz
+            'order': relative to the inner race rotation, fr.
     ----
     signal processing step:
     1. subtract dc bias from accelerometer data
@@ -365,18 +373,28 @@ def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap =
 
 def acc_processing_ver2(dir:str, 
                         state: bool = False, state_result_filename:str = 'state.xlsx', 
-                        fft: bool = False, fft_result_filename:str = 'fft.xlsx'):
+                        fft: bool = False, fft_result_filename:str = 'fft.xlsx', domain: Literal["frequency", "order"] = "frequency"):
     """
     read level vs time .xlsx file, loop for each file in the directory, read as panda data frame and do selected processing, 
-    save the result of from multiple file of raw acc data into one result excel sheet.
-
-    :param state: whether use the data frame to calculate time domain standard deviation etc..
-    :param fft: whether to calculate fast fourier transform
+    save the result of from multiple file of raw acc data into seperate excel sheet. Because order is representes as number
+    of times of rotation frequency, the orders of each acc file will be different since the rotation frequency is changing.
+    The FFT result should save in different sheet as the indexing order is different.
+    
+    parameters
+    -----
+    state: whether use the data frame to calculate time domain standard deviation etc..
+    fft: whether to calculate fast fourier transform
+    domain: units of the spectrum x labels
+            'frequency': hz
+            'order': relative to the inner race rotation, fr.
     """
     if state:
         df_all_stats = pd.DataFrame()
     if fft:
-        df_all_fft = pd.DataFrame()
+        # an excel file with one default sheet is created
+        wb = openpyxl.Workbook()
+        wb.save(fft_result_filename)
+
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx'):
             df = pd.read_excel(dir+file_name, header=0)
@@ -386,13 +404,15 @@ def acc_processing_ver2(dir:str,
                 df_stats = stat_calc(df)
                 df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
             if fft:
-                df_fft = get_fft_wo_filtering(df, fs=51200)
-                df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
-    
+                df_fft = get_fft_wo_filtering(df, fs=51200, domain=domain)
+                with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+                    df_fft.to_excel(writer, sheet_name=file_name[:-5])    
     if state:
         df_all_stats.to_excel(state_result_filename, sheet_name='state')
     if fft:
-        df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
+        # remove the first default blank sheet
+        wb.remove(wb['Sheet'])
+        wb.save(fft_result_filename)     
 
 def savefftplot(df_fft:pd.DataFrame, sample:list, annotate_peaks:bool, annotate_bends:bool, save_fig:bool, save_dir:str):
     '''
@@ -619,19 +639,18 @@ if __name__ == '__main__':
     fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(horizontal)_202402.xlsx"
     fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(vertical)_202402.xlsx"
     acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\acc_data\\"
-    #acc_processing(acc_file_v, fft=True, fft_result_filename="fft_v.xlsx")
-    #acc_processing_ver2(acc_file_dir, False, 'state_defect_samples.xlsx', True, 'fft_defect_samples.xlsx')
+    acc_processing_ver2(acc_file_dir, fft=True, fft_result_filename='fft_defect_samples_order.xlsx', domain="order")
     #df_fft = fft_processing(fft_file_v)
     #df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
-    df_fft = pd.read_excel('sp_rms.xlsx', header=0, index_col=0)
-    fig, ax = plt.subplots(layout='constrained')
-    df_fft.plot(logx=True, title='ordered frequency spectrum', xlabel='order of rotation speed', ylabel='Amplitude', logy=True, ax=ax)
-    fb = bearingFaultBands(fr=1, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 6), domain='order')
-    annotateFreqBands(ax, fb, df_fft.index)
-    plt.show()
+    #df_fft = pd.read_excel('sp_rms.xlsx', header=0, index_col=0)
+    #fig, ax = plt.subplots(layout='constrained')
+    #df_fft.plot(logx=True, title='ordered frequency spectrum', xlabel='order of rotation speed', ylabel='Amplitude', logy=True, ax=ax)
+    #fb = bearingFaultBands(fr=1, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 6), domain='order')
+    #annotateFreqBands(ax, fb, df_fft.index)
+    #plt.show()
 
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
