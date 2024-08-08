@@ -1,5 +1,16 @@
 # Vibration analysis
 
+## Data format
+
+### accelerometer signal sequence
+
+This is a time domain measurement row data in unit g(m/s^2), the data length is defined in `analog_input.py`.
+Each measurement is store in a `.xlsx` file with single sheet to prevent large file size. The file is saved with only top row of header.
+
+### FFT file
+
+All measurement that after FFT will saved in different sheet of the same `.xlsx` file, with index in the first column, representing the frequency or the order of rotation frequency. The order of rotation frequency is used for compatibility of different rotation speed of sample.
+
 ## Reference
 
 ### Data processing

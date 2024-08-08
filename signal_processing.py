@@ -639,9 +639,8 @@ if __name__ == '__main__':
     fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(horizontal)_202402.xlsx"
     fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(vertical)_202402.xlsx"
     acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\acc_data\\"
-    acc_processing_ver2(acc_file_dir, fft=True, fft_result_filename='fft_defect_samples_order.xlsx', domain="order")
-    #df_fft = fft_processing(fft_file_v)
-    #df_fft = pd.read_excel('fft_defect_samples.xlsx', index_col=0, header=0)
+    #acc_processing_ver2(acc_file_dir, fft=True, fft_result_filename='fft_defect_samples_order.xlsx', domain="order")
+    df_fft = pd.read_excel('fft_defect_samples_order.xlsx', sheet_name=None, index_col=0, header=0)
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
