@@ -17,6 +17,7 @@ def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:in
     """
     workbook: transfer from head-acoustic data frame (abbreviated as file extension .hdf),
     with analysis type **Level vs. Time (Fast)**, which is the raw data of accelerometers.
+    
     :param sheet_name: each sheet as one hdf file. The head-acoustic .hdf file name is at cell 'B5'.
     :param channel: input signal channel number, for example, the number of accelerometers.
     """
@@ -126,18 +127,16 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
     """
     do FFT with hanning window frame
     
-    param
-    -----
-    df: input acc data, each column represents a sequence signal of accelerometers, and the last column is the fg sensor.
-    fs: sampling frequency
-    nperseq: number of samples of each window frame
-    noverlap: overlapping samples
-    axis: rfft along windowed frame data axis, the shape of windowed frame is [number of frames, nperseq, columns number of input df]
-    domain: units of the spectrum x labels
+    :param df: input acc data, each column represents a sequence signal of accelerometers, and the last column is the fg sensor.
+    :param fs: sampling frequency
+    :param nperseq: number of samples of each window frame
+    :param noverlap: overlapping samples
+    :param axis: rfft along windowed frame data axis, the shape of windowed frame is [number of frames, nperseq, columns number of input df]
+    :param domain: units of the spectrum x labels
             'frequency': hz
             'order': relative to the inner race rotation, fr.
-    fg_column: the last column number of input data frame
-    pulse_per_round: fg sensor pulse numbers per round
+    :param fg_column: the last column number of input data frame
+    :param pulse_per_round: fg sensor pulse numbers per round
     """
     frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
     window = np.hanning(nperseq)
@@ -176,6 +175,7 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
 def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
     return fft as dataframe type
+    
     :param fs: sampling frequency
     ----
     signal processing step:
@@ -194,6 +194,7 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
 def annotatePeaks(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
     """
     analysis the peak and add annotation on the graph
+    
     :param a: 1d array spectrum absolute value
     :param freq: 1d array frequency
     """
@@ -354,13 +355,10 @@ def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap =
     '''
     return fft as dataframe type
     
-    parameters
-    -----
-    fs: sampling frequency
-    domain: units of the spectrum x labels
+    :param fs: sampling frequency
+    :param domain: units of the spectrum x labels
             'frequency': hz
             'order': relative to the inner race rotation, fr.
-    ----
     signal processing step:
     1. subtract dc bias from accelerometer data
     2. do FFT with hanning window frame
@@ -380,11 +378,9 @@ def acc_processing_ver2(dir:str,
     of times of rotation frequency, the orders of each acc file will be different since the rotation frequency is changing.
     The FFT result should save in different sheet as the indexing order is different.
     
-    parameters
-    -----
-    state: whether use the data frame to calculate time domain standard deviation etc..
-    fft: whether to calculate fast fourier transform
-    domain: units of the spectrum x labels
+    :param state: whether use the data frame to calculate time domain standard deviation etc..
+    :param fft: whether to calculate fast fourier transform
+    :param domain: units of the spectrum x labels
             'frequency': hz
             'order': relative to the inner race rotation, fr.
     """
@@ -418,15 +414,13 @@ def savefftplot(df_fft:pd.DataFrame, sample:list, annotate_peaks:bool, annotate_
     '''
     show or save a fft plot of selected sample numbers
 
-    parameters
-    ------
-    df_fft: each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
-    which is left/right/axile/fg/up/down/axile/fg, fg signal will not be shown in the figure, so the cols = [0,1,2,4,5,6]
-    sample: the selected sample number to show or save the picture, array of integer
-    annotate_peaks: True to annotate peaks of fft spectrum
-    annotate_bends: True to annotate frequency bends
-    save_fig: True to save the fig 
-    save_dir: save the figure to this directory
+    :param df_fft: each column represents a accelerometer fft spectrum, first six number is the part number, and there are 8 column for each part,
+    :param which is left/right/axile/fg/up/down/axile/fg, fg signal will not be shown in the figure, so the cols = [0,1,2,4,5,6]
+    :param sample: the selected sample number to show or save the picture, array of integer
+    :param annotate_peaks: True to annotate peaks of fft spectrum
+    :param annotate_bends: True to annotate frequency bends
+    :param save_fig: True to save the fig 
+    :param save_dir: save the figure to this directory
     '''
     for n in sample:
         series = df_fft[df_fft.columns[8*n]].to_numpy()
@@ -480,19 +474,17 @@ def bearingFaultBands(fr:float, nb:int, db:float, dp:float, beta:float, harmonic
     https://www.mathworks.com/help/predmaint/ref/bearingfaultbands.html
     the calculation is based on fixed outer race with rotating inner race
     
-    parameters
-    ----------
-    fr: Rotational speed of the shaft or inner race, this parameter is used if the domain is 'frequency'.
-    nb: Number of balls or rollers
-    db: Diameter of the ball or roller
-    dp: Pitch diameter
-    beta: Contact angle in degree
-    harmonics: harmonics of the fundamental frequency to be included
+    :param fr: Rotational speed of the shaft or inner race, this parameter is used if the domain is 'frequency'.
+    :param nb: Number of balls or rollers
+    :param db: Diameter of the ball or roller
+    :param dp: Pitch diameter
+    :param beta: Contact angle in degree
+    :param harmonics: harmonics of the fundamental frequency to be included
     1 (default) | vector of positive integers
-    Sidebands: Sidebands around the fundamental frequency and its harmonics to be included
+    :param Sidebands: Sidebands around the fundamental frequency and its harmonics to be included
     0 (default) | vector of nonnegative integers
-    width: width of the frequency bands centered at the nominal fault frequencies
-    domain: units of the fault band frequencies
+    :param width: width of the frequency bands centered at the nominal fault frequencies
+    :param domain: units of the fault band frequencies
             'frequency': hz
             'order': relative to the inner race rotation, fr.
     
@@ -562,11 +554,9 @@ def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
     Annotate bearing frequency bands in different color based on its fault group.
     Note: the input axes should use constrained layout
     
-    parameters
-    -------
-    axes: subplots for annotation
-    fb: bearing fault bands
-    x: x-axis of subplots, which is the index of frequency spectrum
+    :param axes: subplots for annotation
+    :param fb: bearing fault bands
+    :param x: x-axis of subplots, which is the index of frequency spectrum
     '''
     length = len(x)
     color_arr = ['red', 'yellow', 'green', 'blue']
@@ -580,12 +570,10 @@ def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
     
 def techometer(fg_signal: pd.DataFrame, thereshold:float, fs:int, pulse_per_round: int):
     '''
-    parameters
-    ------
-    fg_signal: square wave signal array
-    thereshold: count for rising edge
-    fs: smapling frequency
-    pulse_per_round: pulse numbers per round, used for rotation speed calculation
+    :param fg_signal: square wave signal array
+    :param thereshold: count for rising edge
+    :param fs: smapling frequency
+    :param pulse_per_round: pulse numbers per round, used for rotation speed calculation
     
     returns
     ------
@@ -634,11 +622,9 @@ def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
     return rps
 
 if __name__ == '__main__':
-    acc_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240222Level_vs_Time.xlsx"
-    acc_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\richard\\20240201Level_vs_Time.xlsx"
-    fft_file_h = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(horizontal)_202402.xlsx"
-    fft_file_v = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\raw_data_20240308\\fft(vertical)_202402.xlsx"
     acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\acc_data\\"
+    sound_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\"
+    rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
     #acc_processing_ver2(acc_file_dir, fft=True, fft_result_filename='fft_defect_samples_order.xlsx', domain="order")
     df_fft = pd.read_excel('fft_defect_samples_order.xlsx', sheet_name=None, index_col=0, header=0)
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
