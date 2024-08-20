@@ -120,6 +120,7 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
         ax2.plot(t, output)
         ax2.set_title('After %d hz high-pass filter'%cutoff)
         ax2.set_xlabel('Time [seconds]')
+        plt.show()
     return output
 
 def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
@@ -172,7 +173,7 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
         sp_rms.index.rename('order of rotating frequency', inplace=True)
         return sp_rms
 
-def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
+def get_fft(df: pd.DataFrame, cut_off_freq, frame_len=8192, fs = 48000, overlap = 0.75):
     '''
     return fft as dataframe type
     
@@ -187,7 +188,8 @@ def get_fft(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
     # subtract dc bias from acc data
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
     # use high-pass filter to remove dc 
-    filtered_df = butter_highpass(detrend_df, df.index, 60, fs, 2)
+    filtered_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2, visualize=True)
+    filtered_df = pd.DataFrame(data=filtered_df, columns=df.columns)
     df_fft = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
     return df_fft
 
@@ -264,9 +266,12 @@ def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:t
         os.makedirs(path_dir)
     fig.savefig(path_dir+file_name, transparent=False, dpi=80, bbox_inches="tight")
 
-def acc_processing(hdf_level_time_filename:str , 
+def acc_processing(hdf_level_time_filename:str,
+                   level_time_col:int = 3,
+                   sheets:list = None,
                    state: bool = False, state_result_filename:str = 'state.xlsx', 
                    fft: bool = False, fft_result_filename:str = 'fft.xlsx',
+                   cut_off_freq: float = 60,
                    psd: bool = False, psd_result_filename:str = 'psd.xlsx'):
     """
     read level vs time acoustic .hdf file, loop for each sheet, read as panda data frame and do selected processing, 
@@ -284,15 +289,16 @@ def acc_processing(hdf_level_time_filename:str ,
         df_all_fft = pd.DataFrame()
     if psd:
         df_all_psd = pd.DataFrame()
-    for sheet in workbook.sheetnames:
-        df, title = workbook_to_dataframe(workbook, sheet, 3)
+    for sheet in sheets:
+        df, title = workbook_to_dataframe(workbook, sheet, level_time_col)
         # rewrite column title adding title
-        df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
+        #df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
+        df.rename(columns=lambda x:title.split()[0], inplace=True)
         if state:
             df_stats = stat_calc(df)
             df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
         if fft:
-            df_fft = get_fft(df)
+            df_fft = get_fft(df, cut_off_freq=cut_off_freq)
             #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))        
             df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
         if psd:
@@ -390,6 +396,7 @@ def acc_processing_ver2(dir:str,
         # an excel file with one default sheet is created
         wb = openpyxl.Workbook()
         wb.save(fft_result_filename)
+        wb.close()
 
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx'):
@@ -402,13 +409,16 @@ def acc_processing_ver2(dir:str,
             if fft:
                 df_fft = get_fft_wo_filtering(df, fs=51200, domain=domain)
                 with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-                    df_fft.to_excel(writer, sheet_name=file_name[:-5])    
+                    df_fft.to_excel(writer, sheet_name=file_name[:-5])
+
     if state:
         df_all_stats.to_excel(state_result_filename, sheet_name='state')
     if fft:
         # remove the first default blank sheet
-        wb.remove(wb['Sheet'])
-        wb.save(fft_result_filename)     
+        with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+            writer.book.remove(writer.book['Sheet'])
+            writer.book.save(fft_result_filename)
+            writer.book.close()
 
 def savefftplot(df_fft:pd.DataFrame, sample:list, annotate_peaks:bool, annotate_bends:bool, save_fig:bool, save_dir:str):
     '''
@@ -621,12 +631,41 @@ def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
     rps[start:] = rps[start - 1]    
     return rps
 
+def level_and_rpm_seperate_processing(hdf_level_time_filename, level_sheet, level_col, hdf_rpm_time_filename = None, rpm_sheet = None, fft_filename = None, fft_sheet = None):
+    '''
+    read seperate **level_vs_time.hdf** and **rpm_vs_time.hdf**, with different sampling frequency, to calculate
+    FFT based on rpm rotating speed, in order to compare different sample with normalized rotating frequency order
+    and output the FFT order result to specified file
+    '''
+    workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
+    df, title = workbook_to_dataframe(workbook, level_sheet, level_col)
+    # rewrite column title adding title
+    df.rename(columns=lambda x:title.split()[0], inplace=True)
+    # continue...
+    
+def compare_rps_of_rpm_vs_time_file(dir):
+    df_dict = {}
+
+    for file_name in os.listdir(dir):
+        if file_name.endswith('.xlsx') and not file_name.startswith('~$'):
+            print('opening file: %s'%file_name)
+            wb = openpyxl.load_workbook(dir + file_name, read_only=True, data_only=True, keep_links=False)
+            df, title = workbook_to_dataframe(wb, 'Sheet1', 1)
+            wb.close()
+            df[df.columns[0]] = df[df.columns[0]]/60
+            key = title.split()[0]
+            df.rename(columns=lambda x: title.split()[0], inplace=True)
+            df_dict[key] = df
+    return df_dict
+
 if __name__ == '__main__':
-    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line\\acc_data\\"
-    sound_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\"
+    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\acc_data\\"
+    sound_file = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\good-100%-18300.Level vs. Time.xlsx"
     rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
-    #acc_processing_ver2(acc_file_dir, fft=True, fft_result_filename='fft_defect_samples_order.xlsx', domain="order")
-    df_fft = pd.read_excel('fft_defect_samples_order.xlsx', sheet_name=None, index_col=0, header=0)
+    acc_processing_ver2(dir=acc_file_dir, fft=True)
+    #level_and_rpm_seperate_processing(sound_file, 'Sheet1')
+    #compare_rps_of_rpm_vs_time_file(rpm_file_dir)
+    #df_fft = pd.read_excel('fft_defect_samples_order.xlsx', sheet_name=None, index_col=0, header=0)
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
