@@ -15,7 +15,7 @@ import memd.MEMD_all
 from itertools import islice
 import os
 
-def workbook_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:int):
+def hdf_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:int):
     """
     workbook: transfer from head-acoustic data frame (abbreviated as file extension .hdf),
     with analysis type **Level vs. Time (Fast)**, which is the raw data of accelerometers.
@@ -292,7 +292,7 @@ def acc_processing(hdf_level_time_filename:str,
     if psd:
         df_all_psd = pd.DataFrame()
     for sheet in sheets:
-        df, title = workbook_to_dataframe(workbook, sheet, level_time_col)
+        df, title = hdf_to_dataframe(workbook, sheet, level_time_col)
         # rewrite column title adding title
         #df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
         df.rename(columns=lambda x:title.split()[0], inplace=True)
@@ -331,15 +331,15 @@ def update_peak_dic(dic:dict, idxs:list[int]):
         else:
             dic[key] = 1
 
-def fft_processing(hdf_fft_filename:str):
+def fft_processing(hdf_fft_filename:str, sheet_to_dataframe_method: None, *parameter):
     """
-    read acoustic head exported FFT excel file, loop for each sheet, combine as one panda data frame
+    read acoustic head exported FFT excel file, loop for each sheet, combine as one pandas data frame
     """
     workbook = openpyxl.load_workbook(hdf_fft_filename, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + hdf_fft_filename + " )")
     df_all_fft = pd.DataFrame()
     for sheet in workbook.sheetnames:
-        df, title = workbook_to_dataframe(workbook, sheet, 3)
+        df, title = hdf_to_dataframe(workbook, sheet, 3)
         # rewrite column title adding title
         df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
         df_all_fft = pd.concat([df_all_fft, df], axis=1)
@@ -640,7 +640,7 @@ def level_and_rpm_seperate_processing(hdf_level_time_filename, level_sheet, leve
     and output the FFT order result to specified file
     '''
     workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
-    df, title = workbook_to_dataframe(workbook, level_sheet, level_col)
+    df, title = hdf_to_dataframe(workbook, level_sheet, level_col)
     # rewrite column title adding title
     df.rename(columns=lambda x:title.split()[0], inplace=True)
     # continue...
@@ -652,7 +652,7 @@ def compare_rps_of_rpm_vs_time_file(dir):
         if file_name.endswith('.xlsx') and not file_name.startswith('~$'):
             print('opening file: %s'%file_name)
             wb = openpyxl.load_workbook(dir + file_name, read_only=True, data_only=True, keep_links=False)
-            df, title = workbook_to_dataframe(wb, 'Sheet1', 1)
+            df, title = hdf_to_dataframe(wb, 'Sheet1', 1)
             wb.close()
             df[df.columns[0]] = df[df.columns[0]]/60
             key = title.split()[0]
