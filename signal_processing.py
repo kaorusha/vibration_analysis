@@ -2,7 +2,9 @@ from typing import Any
 from typing import Literal
 from xml import dom
 import librosa
+from matplotlib import legend
 import matplotlib.axes
+import matplotlib.mlab
 from scipy import signal
 import numpy as np
 import openpyxl
@@ -658,14 +660,52 @@ def compare_rps_of_rpm_vs_time_file(dir):
             df_dict[key] = df
     return df_dict
 
+def acc_processing_coherence(dir: str, good_sample_num:str, result_filename:str, visualize:bool = False):
+    wb = openpyxl.Workbook()
+    wb.save(result_filename)
+    wb.close()
+    df_x_lr = pd.read_excel(dir + good_sample_num + '_lr.xlsx', header = 0)
+    df_x_ud = pd.read_excel(dir + good_sample_num + '_ud.xlsx', header = 0)
+    
+    for file_name in os.listdir(dir):
+        if file_name.endswith('.xlsx') and not file_name.startswith(good_sample_num):
+            print("read excel %s"%file_name)
+            df_y = pd.read_excel(dir + file_name, header = 0)
+            if visualize:
+                fig, axs = plt.subplots(4, 1, layout='constrained')
+            if 'lr' in file_name:
+                freq, Cxy = signal.coherence(df_x_lr, df_y, fs=51200, nperseg=8192, noverlap=8192*0.75, axis=0)
+                if visualize:
+                    for i in [0,1,2,3]:
+                        cxy, f = axs[i].cohere(x=df_x_lr.iloc[:, i], y=df_y.iloc[:, i], NFFT=8192, Fs=51200, detrend='mean', noverlap=int(8192*0.75), window=np.hanning(8192),
+                                            label=df_x_lr.columns[i] + ' vs ' + df_y.columns[i])
+                        axs[i].legend()
+
+            if 'ud' in file_name and visualize:
+                freq, Cxy = signal.coherence(df_x_ud, df_y, fs=51200, nperseg=8192, noverlap=8192*0.75, axis=0)
+                if visualize:
+                    for i in [0,1,2,3]:
+                        cxy, f = axs[i].cohere(x=df_x_ud.iloc[:, i], y=df_y.iloc[:, i], NFFT=8192, Fs=51200, detrend='mean', noverlap=int(8192*0.75), window=np.hanning(8192),
+                                            label=df_x_ud.columns[i] + ' vs ' + df_y.columns[i])
+                        axs[i].legend()
+            if visualize:
+                plt.show()
+            
+            with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+                df = pd.DataFrame(data=Cxy, index=freq, columns=df_y.columns)
+                df.to_excel(writer, sheet_name=file_name[:-5])
+    # remove the first default blank sheet
+    with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+        writer.book.remove(writer.book['Sheet'])
+        writer.book.save(result_filename)
+        writer.book.close()
+
 if __name__ == '__main__':
     acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\acc_data\\"
     sound_file = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\good-100%-18300.Level vs. Time.xlsx"
     rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
-    acc_processing_ver2(dir=acc_file_dir, fft=True)
-    #level_and_rpm_seperate_processing(sound_file, 'Sheet1')
-    #compare_rps_of_rpm_vs_time_file(rpm_file_dir)
-    #df_fft = pd.read_excel('fft_defect_samples_order.xlsx', sheet_name=None, index_col=0, header=0)
+    acc_processing_coherence(dir=acc_file_dir, good_sample_num='000045', result_filename='coherence.xlsx')
+    #df_fft = pd.read_excel('fft.xlsx', sheet_name=None, index_col=0, header=0)
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
