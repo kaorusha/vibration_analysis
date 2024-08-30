@@ -1,8 +1,6 @@
 from typing import Any
 from typing import Literal
-from xml import dom
 import librosa
-from matplotlib import legend
 import matplotlib.axes
 import matplotlib.mlab
 from scipy import signal
@@ -12,26 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import emd
 import memd.MEMD_all
-from itertools import islice
 import os
-
-def hdf_to_dataframe(workbook:openpyxl.Workbook, sheet_name:str, channel:int):
-    """
-    workbook: transfer from head-acoustic data frame (abbreviated as file extension .hdf),
-    with analysis type **Level vs. Time (Fast)**, which is the raw data of accelerometers.
-    
-    :param sheet_name: each sheet as one hdf file. The head-acoustic .hdf file name is at cell 'B5'.
-    :param channel: input signal channel number, for example, the number of accelerometers.
-    """
-    record_name = workbook[sheet_name]["B5"].value
-    data = workbook[sheet_name].values
-    data = list(data)[13:]
-    cols = data[0][1:channel+1]
-    idx = [r[0] for r in data[1:]]
-    data = (islice(r, 1, channel+1) for r in data[1:])
-    df = pd.DataFrame(data, index=idx, columns=cols)
-    #print("sheet: " + sheet_name + "\t df shape = (%s , %s)" % df.shape)
-    return df, record_name
 
 color = {
     'blue': (0, 0.4470, 0.7410),
@@ -291,8 +270,11 @@ def acc_processing(hdf_level_time_filename:str,
         df_all_fft = pd.DataFrame()
     if psd:
         df_all_psd = pd.DataFrame()
+    if sheets == None:
+        sheets = workbook.sheetnames
     for sheet in sheets:
-        df, title = hdf_to_dataframe(workbook, sheet, level_time_col)
+        title = workbook[sheet]["B5"].value
+        df = pd.read_excel(hdf_level_time_filename, sheet_name=sheet, header=13, index_col=0, skiprows=13)
         # rewrite column title adding title
         #df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
         df.rename(columns=lambda x:title.split()[0], inplace=True)
@@ -331,17 +313,24 @@ def update_peak_dic(dic:dict, idxs:list[int]):
         else:
             dic[key] = 1
 
-def fft_processing(hdf_fft_filename:str, sheet_to_dataframe_method: None, *parameter):
+def rename_col(df: pd.DataFrame, title:str):
+    # rewrite column title adding title
+    df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
+
+def fft_processing(fft_filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None):
     """
-    read acoustic head exported FFT excel file, loop for each sheet, combine as one pandas data frame
+    read previous exported FFT excel file, loop for each sheet, combine as one pandas data frame
     """
-    workbook = openpyxl.load_workbook(hdf_fft_filename, read_only=True, data_only=True, keep_links=False)
-    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + hdf_fft_filename + " )")
+    workbook = openpyxl.load_workbook(fft_filename, read_only=True, data_only=True, keep_links=False)
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + fft_filename + " )")
     df_all_fft = pd.DataFrame()
     for sheet in workbook.sheetnames:
-        df, title = hdf_to_dataframe(workbook, sheet, 3)
-        # rewrite column title adding title
-        df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
+        if file_type == 'normal':
+            df = pd.read_excel(fft_filename, sheet_name=sheet, header=0, index_col=0)
+        if file_type == 'hdf':
+            title = workbook[sheet]["B5"].value
+            df = pd.read_excel(fft_filename, sheet_name=sheet, header=13, index_col=0, skiprows=13)
+            rename_column_method(df, title)
         df_all_fft = pd.concat([df_all_fft, df], axis=1)
     workbook.close()
     return df_all_fft
@@ -640,7 +629,8 @@ def level_and_rpm_seperate_processing(hdf_level_time_filename, level_sheet, leve
     and output the FFT order result to specified file
     '''
     workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
-    df, title = hdf_to_dataframe(workbook, level_sheet, level_col)
+    title = workbook[level_sheet]["B5"].value
+    df = pd.read_excel(hdf_level_time_filename, sheet_name=level_sheet, header=13, index_col=0, skiprows=13)
     # rewrite column title adding title
     df.rename(columns=lambda x:title.split()[0], inplace=True)
     # continue...
@@ -652,8 +642,9 @@ def compare_rps_of_rpm_vs_time_file(dir):
         if file_name.endswith('.xlsx') and not file_name.startswith('~$'):
             print('opening file: %s'%file_name)
             wb = openpyxl.load_workbook(dir + file_name, read_only=True, data_only=True, keep_links=False)
-            df, title = hdf_to_dataframe(wb, 'Sheet1', 1)
+            title = wb['Sheet1']["B5"].value
             wb.close()
+            df = pd.read_excel(dir + file_name, sheet_name='Sheet1', header=13, index_col=0, skiprows=13)
             df[df.columns[0]] = df[df.columns[0]]/60
             key = title.split()[0]
             df.rename(columns=lambda x: title.split()[0], inplace=True)
@@ -701,11 +692,13 @@ def acc_processing_coherence(dir: str, good_sample_num:str, result_filename:str,
         writer.book.close()
 
 if __name__ == '__main__':
-    acc_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\acc_data\\"
+    dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\"
     sound_file = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\good-100%-18300.Level vs. Time.xlsx"
     rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
-    acc_processing_coherence(dir=acc_file_dir, good_sample_num='000045', result_filename='coherence.xlsx')
-    #df_fft = pd.read_excel('fft.xlsx', sheet_name=None, index_col=0, header=0)
+    df_fft = fft_processing(fft_filename=dir + 'fft.xlsx')
+    df_corr = df_fft.corr(method='spearman')
+    with pd.ExcelWriter('corr.xlsx', mode='a', engine='openpyxl') as writer:
+        df_corr.to_excel(writer, sheet_name='spearman')
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
