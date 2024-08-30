@@ -17,8 +17,8 @@ with nidaqmx.Task() as task:
     data = task.read(READ_ALL_AVAILABLE)
     t2 = time.perf_counter()
     print('acquire time: {}'.format(t2 - t1))
-    file_name = '001833_ud'
-    df = pd.DataFrame({file_name+'_up':data[0], file_name+'_down':data[1], file_name+'_axial':data[2], file_name+'fg':data[3]})
-    df.plot(title='acc data', xlabel='time(sec)', ylabel='g')
+    file_name = '001833_lr'
+    df = pd.DataFrame({file_name+'_left':data[0], file_name+'_right':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
+    df.iloc[:,0:3].plot(title='acc data', xlabel='time(sec)', ylabel='g')
     df.to_excel('../%s.xlsx'%file_name, sheet_name='acc_data', index=False)
     plt.show()
