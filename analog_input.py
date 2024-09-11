@@ -2,7 +2,7 @@ import nidaqmx
 from nidaqmx.constants import AcquisitionType, READ_ALL_AVAILABLE, EncoderType
 import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
+import sys
 import time
 with nidaqmx.Task() as task:
     task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai0", "acc0", sensitivity=10.22)
@@ -17,8 +17,13 @@ with nidaqmx.Task() as task:
     data = task.read(READ_ALL_AVAILABLE)
     t2 = time.perf_counter()
     print('acquire time: {}'.format(t2 - t1))
-    file_name = '001833_lr'
-    df = pd.DataFrame({file_name+'_left':data[0], file_name+'_right':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
+    dir = 'd:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240911_good_samples\\'
+    file_name = '000027'
+    file_name += '_lr' if sys.argv[1] == '1' else '_ud'
+    if file_name.endswith('lr'):
+        df = pd.DataFrame({file_name+'_left':data[0], file_name+'_right':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
+    if file_name.endswith('ud'):
+        df = pd.DataFrame({file_name+'_up':data[0], file_name+'_down':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
     df.iloc[:,0:3].plot(title='acc data', xlabel='time(sec)', ylabel='g')
-    df.to_excel('../%s.xlsx'%file_name, sheet_name='acc_data', index=False)
+    df.to_excel(dir + '%s.xlsx'%file_name, sheet_name='acc_data', index=False)
     plt.show()
