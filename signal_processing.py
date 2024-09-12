@@ -145,7 +145,7 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
                     sp_dict[keys[j]] = np.vstack([sp_dict[keys[j]],sp[i,j, :3]])
                 else:
                     sp_dict.update({keys[j]: np.array(sp[i,j, :3])})
-        print('There a %d order number as indexing'%len(sp_dict.keys()))
+        print('There are %d order number as indexing'%len(sp_dict.keys()))
         sp_rms = pd.DataFrame(columns=df.columns[:fg_column])
         for key in sp_dict.keys():
             rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp_dict[key]),2), axis=0))
@@ -651,12 +651,12 @@ def compare_rps_of_rpm_vs_time_file(dir):
             df_dict[key] = df
     return df_dict
 
-def acc_processing_coherence(dir: str, good_sample_num:str, result_filename:str, visualize:bool = False):
+def acc_processing_coherence(good_sample_dir:str, dir: str, good_sample_num:str, result_filename:str, visualize:bool = False):
     wb = openpyxl.Workbook()
     wb.save(result_filename)
     wb.close()
-    df_x_lr = pd.read_excel(dir + good_sample_num + '_lr.xlsx', header = 0)
-    df_x_ud = pd.read_excel(dir + good_sample_num + '_ud.xlsx', header = 0)
+    df_x_lr = pd.read_excel(good_sample_dir + good_sample_num + '_lr.xlsx', header = 0)
+    df_x_ud = pd.read_excel(good_sample_dir + good_sample_num + '_ud.xlsx', header = 0)
     
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx') and not file_name.startswith(good_sample_num):
@@ -691,14 +691,27 @@ def acc_processing_coherence(dir: str, good_sample_num:str, result_filename:str,
         writer.book.save(result_filename)
         writer.book.close()
 
+def corr(df:pd.DataFrame, result_filename:str):
+    wb = openpyxl.Workbook()
+    wb.save(result_filename)
+    wb.close()
+    
+    for meth in ['pearson', 'kendall', 'spearman']:
+        df_corr = df.corr(method=meth)
+        with pd.ExcelWriter(result_filename, mode='a', engine='openpyxl') as writer:
+            df_corr.to_excel(writer, sheet_name=meth)
+    # remove the first default blank sheet
+    with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+        writer.book.remove(writer.book['Sheet'])
+        writer.book.save(result_filename)
+        writer.book.close()
+
 if __name__ == '__main__':
-    dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\"
+    dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240911_good_samples\\acc_data\\"
+    good_sample_fft = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\fft.xlsx"
     sound_file = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\good-100%-18300.Level vs. Time.xlsx"
     rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
-    df_fft = fft_processing(fft_filename=dir + 'fft.xlsx')
-    df_corr = df_fft.corr(method='spearman')
-    with pd.ExcelWriter('corr.xlsx', mode='a', engine='openpyxl') as writer:
-        df_corr.to_excel(writer, sheet_name='spearman')
+    
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
