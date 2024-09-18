@@ -1,8 +1,11 @@
-from typing import Any
+from math import comb
+from operator import index
+from typing import Any, List
 from typing import Literal
 import librosa
 import matplotlib.axes
 import matplotlib.mlab
+from pyparsing import alphas
 from scipy import signal
 import numpy as np
 import openpyxl
@@ -317,21 +320,26 @@ def rename_col(df: pd.DataFrame, title:str):
     # rewrite column title adding title
     df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
 
-def fft_processing(fft_filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None):
+def fft_processing(fft_filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True):
     """
-    read previous exported FFT excel file, loop for each sheet, combine as one pandas data frame
+    read previous exported FFT excel file, loop for each sheet, combine as one pandas data frame, or return a dictionary of dataframe
     """
     workbook = openpyxl.load_workbook(fft_filename, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + fft_filename + " )")
+
+    if file_type == 'normal':
+        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=0, index_col=0, usecols=usecols)
+    if file_type == 'hdf':
+        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=13, index_col=0, skiprows=13, usecols=usecols)
+        for sheet in workbook.sheetnames:
+            title = workbook[sheet]["B5"].value
+            rename_column_method(df_dict[sheet], title)
+    if combine == False:
+        return df_dict 
+    # combine all fft to the same dataframe
     df_all_fft = pd.DataFrame()
     for sheet in workbook.sheetnames:
-        if file_type == 'normal':
-            df = pd.read_excel(fft_filename, sheet_name=sheet, header=0, index_col=0)
-        if file_type == 'hdf':
-            title = workbook[sheet]["B5"].value
-            df = pd.read_excel(fft_filename, sheet_name=sheet, header=13, index_col=0, skiprows=13)
-            rename_column_method(df, title)
-        df_all_fft = pd.concat([df_all_fft, df], axis=1)
+        df_all_fft = pd.concat([df_all_fft, df_dict[sheet]], axis=1)
     workbook.close()
     return df_all_fft
 
@@ -706,11 +714,59 @@ def corr(df:pd.DataFrame, result_filename:str):
         writer.book.save(result_filename)
         writer.book.close()
 
+def fft_analysis(good_sample_fft: {pd.DataFrame}, abnormal_sample_fft: {pd.DataFrame}, types: list):
+    '''
+    if the amplitude of the index frequency of all abnormal samples is greater than all good samples, 
+    high light that frequency on the output spectrum plot.
+    '''
+    fig, axs = plt.subplots(len(types), 1, layout='constrained')
+    
+    bool_df = pd.DataFrame(columns=types)
+    for i in range(len(good_sample_fft.index)):
+        # find the max of each type
+        maximum = [0 for _ in range(len(types))]
+        j = 0
+        while (j < len(good_sample_fft.columns)):
+            for a in range(len(types)):
+                maximum[a] = max(good_sample_fft.iloc[i, j + a], maximum[a])
+            j += len(types)
+        # check each type is larger than the good samples or not
+        bools = pd.DataFrame(data=[[True for i in types]], columns=types)
+
+        k = 0
+        while (k < len(abnormal_sample_fft.columns)):
+            for a in range(len(types)):
+                bools.iloc[:,a] = ((abnormal_sample_fft.iloc[i, k + a] > maximum[a]) & bools.iloc[:,a])
+            k += len(types)
+        bool_df = pd.concat([bool_df, bools], axis=0)
+    # high light the frequency
+    for a in range(len(types)):
+        axs[a].fill_between(good_sample_fft.index, 0, 1, where= bool_df.iloc[:,a], color= 'red', alpha=0.5, transform=axs[a].get_xaxis_transform())
+        axs[a].set_xlim(left=good_sample_fft.index[0], right=7600)
+        axs[a].set_yscale('log')
+        axs[a].set_ylabel(types[a])
+    
+    # add spectrum of good and bad samples
+    k = 0
+    while (k < len(abnormal_sample_fft.columns)):
+        for a in range(len(types)):
+            axs[a].plot(abnormal_sample_fft.index, abnormal_sample_fft.iloc[:, k + a], color='orange', linewidth=1, alpha=0.5)
+        k += len(types)
+    j = 0
+    while (j < len(good_sample_fft.columns)):
+        for a in range(len(types)):
+            axs[a].plot(good_sample_fft.index, good_sample_fft.iloc[:, j + a], color='green', linewidth=1, alpha=0.5)
+        j += len(types)
+    
+    plt.show()
+
 if __name__ == '__main__':
-    dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240911_good_samples\\acc_data\\"
-    good_sample_fft = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\Defective_products_on_line_20%\\fft.xlsx"
-    sound_file = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240808\\good-100%-18300.Level vs. Time.xlsx"
-    rpm_file_dir = "d:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240814\\"
+    good_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3])
+    abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3])
+    good_fft_df = pd.concat([good_fft_df, abnormal_fft_df.iloc[:, 0:6]], axis=1)
+    good_fft_df.to_excel('test.xlsx')
+    abnormal_fft_df = abnormal_fft_df.iloc[:, 6:]
+    fft_analysis(good_sample_fft=good_fft_df, abnormal_sample_fft=abnormal_fft_df, types=['left', 'right', 'axile(1)', 'up', 'down', 'axile(2)'])
     
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
@@ -720,7 +776,6 @@ if __name__ == '__main__':
     #df_fft.plot(logx=True, title='ordered frequency spectrum', xlabel='order of rotation speed', ylabel='Amplitude', logy=True, ax=ax)
     #fb = bearingFaultBands(fr=1, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 6), domain='order')
     #annotateFreqBands(ax, fb, df_fft.index)
-    #plt.show()
 
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
