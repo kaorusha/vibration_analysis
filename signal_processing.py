@@ -545,7 +545,7 @@ def rotationSpeed(df_fft: pd.DataFrame, sample_no:int):
 
 def binary_search(arr, low, high, x):
     '''
-    
+    given an array, and its lowest index and highest index, return index closest to the value x
     '''
     if high >= low:
         mid = (high + low) // 2
@@ -714,7 +714,7 @@ def corr(df:pd.DataFrame, result_filename:str):
         writer.book.save(result_filename)
         writer.book.close()
 
-def fft_analysis(good_sample_fft: {pd.DataFrame}, abnormal_sample_fft: {pd.DataFrame}, types: list):
+def fft_analysis(good_sample_fft: {pd.DataFrame}, benchmarks_sheet:str, abnormal_sample_fft: {pd.DataFrame}, types: list):
     '''
     if the amplitude of the index frequency of all abnormal samples is greater than all good samples, 
     high light that frequency on the output spectrum plot.
@@ -722,51 +722,55 @@ def fft_analysis(good_sample_fft: {pd.DataFrame}, abnormal_sample_fft: {pd.DataF
     fig, axs = plt.subplots(len(types), 1, layout='constrained')
     
     bool_df = pd.DataFrame(columns=types)
-    for i in range(len(good_sample_fft.index)):
+    for freq in good_sample_fft[benchmarks_sheet].index:
         # find the max of each type
         maximum = [0 for _ in range(len(types))]
-        j = 0
-        while (j < len(good_sample_fft.columns)):
-            for a in range(len(types)):
-                maximum[a] = max(good_sample_fft.iloc[i, j + a], maximum[a])
-            j += len(types)
+        for sheet in good_sample_fft:
+            idx = binary_search(good_sample_fft[sheet].index, 0, len(good_sample_fft[sheet].index) - 1, freq)
+            for col in range(len(good_sample_fft[sheet].columns)):
+                for i in range(len(types)):
+                    if good_sample_fft[sheet].columns[col].endswith(types[i]):
+                        maximum[i] = max(good_sample_fft[sheet].iloc[idx, col], maximum[i])
+                        break
         # check each type is larger than the good samples or not
         bools = pd.DataFrame(data=[[True for i in types]], columns=types)
 
-        k = 0
-        while (k < len(abnormal_sample_fft.columns)):
-            for a in range(len(types)):
-                bools.iloc[:,a] = ((abnormal_sample_fft.iloc[i, k + a] > maximum[a]) & bools.iloc[:,a])
-            k += len(types)
+        for sheet in abnormal_sample_fft:
+            idx = binary_search(abnormal_sample_fft[sheet].index, 0, len(abnormal_sample_fft[sheet].index) - 1, freq)
+            for col in range(len(abnormal_sample_fft[sheet].columns)):
+                for i in range(len(types)):
+                    if abnormal_sample_fft[sheet].columns[col].endswith(types[i]):
+                        bools.iloc[:, i] = ((abnormal_sample_fft[sheet].iloc[idx, col] > maximum[i]) & bools.iloc[:, i])
+                        break
         bool_df = pd.concat([bool_df, bools], axis=0)
     # high light the frequency
-    for a in range(len(types)):
-        axs[a].fill_between(good_sample_fft.index, 0, 1, where= bool_df.iloc[:,a], color= 'red', alpha=0.5, transform=axs[a].get_xaxis_transform())
-        axs[a].set_xlim(left=good_sample_fft.index[0], right=7600)
-        axs[a].set_yscale('log')
-        axs[a].set_ylabel(types[a])
+    for i in range(len(types)):
+        axs[i].fill_between(good_sample_fft[benchmarks_sheet].index, 0, 1, where= bool_df.iloc[:,i], color= 'red', alpha=0.5, transform=axs[i].get_xaxis_transform())
+        axs[i].set_xlim(left=good_sample_fft[benchmarks_sheet].index[0], right=7600/44)
+        axs[i].set_yscale('log')
+        axs[i].set_ylabel(types[i])
     
     # add spectrum of good and bad samples
-    k = 0
-    while (k < len(abnormal_sample_fft.columns)):
-        for a in range(len(types)):
-            axs[a].plot(abnormal_sample_fft.index, abnormal_sample_fft.iloc[:, k + a], color='orange', linewidth=1, alpha=0.5)
-        k += len(types)
-    j = 0
-    while (j < len(good_sample_fft.columns)):
-        for a in range(len(types)):
-            axs[a].plot(good_sample_fft.index, good_sample_fft.iloc[:, j + a], color='green', linewidth=1, alpha=0.5)
-        j += len(types)
-    
+    plot_df_each_col_a_fig(abnormal_sample_fft, types, axs, color='orange', linewidth=1, alpha=0.5)
+    plot_df_each_col_a_fig(good_sample_fft, types, axs, color='green', linewidth=1, alpha=0.5)
     plt.show()
 
+def plot_df_each_col_a_fig(df_dict:{pd.DataFrame}, types: list, axs: np.ndarray, **arg):
+    for sheet in df_dict:
+        for col_name in df_dict[sheet].columns:
+            for i in range(len(types)):
+                if col_name.endswith(types[i]):
+                    axs[i].plot(df_dict[sheet].index, df_dict[sheet][col_name], **arg)
+                    break
+
 if __name__ == '__main__':
-    good_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3])
-    abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3])
-    good_fft_df = pd.concat([good_fft_df, abnormal_fft_df.iloc[:, 0:6]], axis=1)
-    good_fft_df.to_excel('test.xlsx')
-    abnormal_fft_df = abnormal_fft_df.iloc[:, 6:]
-    fft_analysis(good_sample_fft=good_fft_df, abnormal_sample_fft=abnormal_fft_df, types=['left', 'right', 'axile(1)', 'up', 'down', 'axile(2)'])
+    good_fft_df = fft_processing('../../test_data//20240911_good_samples//fft_order.xlsx', usecols=[0,1,2,3], combine=False)
+    abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_order_abnormal.xlsx', usecols=[0,1,2,3], combine=False)
+    good_fft_df.update({'000045_lr': abnormal_fft_df['000045_lr']})
+    good_fft_df.update({'000045_ud': abnormal_fft_df['000045_ud']})
+    abnormal_fft_df.pop('000045_lr')
+    abnormal_fft_df.pop('000045_ud')
+    fft_analysis(good_sample_fft=good_fft_df, benchmarks_sheet='000045_lr', abnormal_sample_fft=abnormal_fft_df, types=['left', 'right', 'lr_axial', 'up', 'down', 'ud_axial'])
     
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
