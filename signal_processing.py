@@ -251,7 +251,8 @@ def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:t
     fig.savefig(path_dir+file_name, transparent=False, dpi=80, bbox_inches="tight")
 
 def acc_processing(hdf_level_time_filename:str,
-                   level_time_col:int = 3,
+                   rename_column_method = None,
+                   usecols:list = None,
                    sheets:list = None,
                    state: bool = False, state_result_filename:str = 'state.xlsx', 
                    fft: bool = False, fft_result_filename:str = 'fft.xlsx',
@@ -260,7 +261,6 @@ def acc_processing(hdf_level_time_filename:str,
     """
     read level vs time acoustic .hdf file, loop for each sheet, read as panda data frame and do selected processing, 
     save the result of from multiple sheet of raw acc data into one result excel sheet.
-
     :param state: whether use the data frame to calculate time domain standard deviation etc..
     :param fft: whether to calculate fast fourier transform
     :param psd: whether to calculate power spectral density
@@ -277,10 +277,10 @@ def acc_processing(hdf_level_time_filename:str,
         sheets = workbook.sheetnames
     for sheet in sheets:
         title = workbook[sheet]["B5"].value
-        df = pd.read_excel(hdf_level_time_filename, sheet_name=sheet, header=13, index_col=0, skiprows=13)
+        df = pd.read_excel(hdf_level_time_filename, sheet_name=sheet, header=0, index_col=0, skiprows=13, usecols=usecols)
         # rewrite column title adding title
-        #df.rename(columns=lambda x: title[15:20] + '_' + x.split()[0][4:], inplace=True)
-        df.rename(columns=lambda x:title.split()[0], inplace=True)
+        if rename_column_method is not None:
+            rename_column_method(df, title)
         if state:
             df_stats = stat_calc(df)
             df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
@@ -330,7 +330,7 @@ def fft_processing(fft_filename:str, file_type:Literal['hdf', 'normal'] = 'norma
     if file_type == 'normal':
         df_dict = pd.read_excel(fft_filename, sheet_name=None, header=0, index_col=0, usecols=usecols)
     if file_type == 'hdf':
-        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=13, index_col=0, skiprows=13, usecols=usecols)
+        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=0, index_col=0, skiprows=13, usecols=usecols)
         for sheet in workbook.sheetnames:
             title = workbook[sheet]["B5"].value
             rename_column_method(df_dict[sheet], title)
@@ -638,7 +638,7 @@ def level_and_rpm_seperate_processing(hdf_level_time_filename, level_sheet, leve
     '''
     workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
     title = workbook[level_sheet]["B5"].value
-    df = pd.read_excel(hdf_level_time_filename, sheet_name=level_sheet, header=13, index_col=0, skiprows=13)
+    df = pd.read_excel(hdf_level_time_filename, sheet_name=level_sheet, header=0, index_col=0, skiprows=13)
     # rewrite column title adding title
     df.rename(columns=lambda x:title.split()[0], inplace=True)
     # continue...
@@ -652,7 +652,7 @@ def compare_rps_of_rpm_vs_time_file(dir):
             wb = openpyxl.load_workbook(dir + file_name, read_only=True, data_only=True, keep_links=False)
             title = wb['Sheet1']["B5"].value
             wb.close()
-            df = pd.read_excel(dir + file_name, sheet_name='Sheet1', header=13, index_col=0, skiprows=13)
+            df = pd.read_excel(dir + file_name, sheet_name='Sheet1', header=0, index_col=0, skiprows=13)
             df[df.columns[0]] = df[df.columns[0]]/60
             key = title.split()[0]
             df.rename(columns=lambda x: title.split()[0], inplace=True)
@@ -764,14 +764,12 @@ def plot_df_each_col_a_fig(df_dict:{pd.DataFrame}, types: list, axs: np.ndarray,
                     break
 
 if __name__ == '__main__':
-    good_fft_df = fft_processing('../../test_data//20240911_good_samples//fft_order.xlsx', usecols=[0,1,2,3], combine=False)
-    abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_order_abnormal.xlsx', usecols=[0,1,2,3], combine=False)
-    good_fft_df.update({'000045_lr': abnormal_fft_df['000045_lr']})
-    good_fft_df.update({'000045_ud': abnormal_fft_df['000045_ud']})
-    abnormal_fft_df.pop('000045_lr')
-    abnormal_fft_df.pop('000045_ud')
-    fft_analysis(good_sample_fft=good_fft_df, benchmarks_sheet='000045_lr', abnormal_sample_fft=abnormal_fft_df, types=['left', 'right', 'lr_axial', 'up', 'down', 'ud_axial'])
-    
+    hdf_level_time_filename = '../../test_data//20240919//sound_acc//20240919#4073_10s_20%-UD.Level vs. Time.xlsx'
+    fft_filename = '../../test_data//20240919//fft_4073_ud.xlsx'
+    def rename_col(df:pd.DataFrame, title:str):
+        df.rename(columns=lambda x:'4073_ud_' + x.split()[0], inplace=True)
+    acc_processing(hdf_level_time_filename=hdf_level_time_filename, rename_column_method=rename_col, usecols="A:F", fft=True, cut_off_freq=10, fft_result_filename=fft_filename)
+
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
