@@ -108,7 +108,8 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
     return output
 
 def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
-        domain:Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round=2):
+        domain:Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round=2,
+        rps:list = None, cols = 3):
     """
     do FFT with hanning window frame
     
@@ -122,10 +123,11 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
             'order': relative to the inner race rotation, fr.
     :param fg_column: the last column number of input data frame
     :param pulse_per_round: fg sensor pulse numbers per round
+    :param rps: round per second of each frame as a list with same length of frames 
     """
     frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
     window = np.hanning(nperseq)
-    windowed_frames = np.empty(frames.shape) # frane,shape = [frame_numbers, frame_length, columns_dataframe]
+    windowed_frames = np.empty(frames.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
     for col in range(frames.shape[-1]):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
     sp = np.fft.rfft(windowed_frames, n=nperseq, axis=axis, norm='backward')
@@ -138,18 +140,19 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
         return sp_rms
     if domain == 'order':
         # the rotating freq of each frame
-        idx = np.argmax(np.abs(sp[:, :, 3]), axis=1)
+        if rps == None:
+            idx = np.argmax(np.abs(sp[:, :, fg_column]), axis=1)
+            rps = freq[idx]/pulse_per_round
         sp_dict = {}
-        for i in range(len(idx)):
-            rps = freq[idx[i]]/pulse_per_round
-            keys = freq/rps
+        for i in range(len(rps)):
+            keys = freq/rps[i]
             for j in range(len(keys)):
                 if keys[j] in sp_dict:
-                    sp_dict[keys[j]] = np.vstack([sp_dict[keys[j]],sp[i,j, :3]])
+                    sp_dict[keys[j]] = np.vstack([sp_dict[keys[j]],sp[i,j, :cols]])
                 else:
-                    sp_dict.update({keys[j]: np.array(sp[i,j, :3])})
+                    sp_dict.update({keys[j]: np.array(sp[i,j, :cols])})
         print('There are %d order number as indexing'%len(sp_dict.keys()))
-        sp_rms = pd.DataFrame(columns=df.columns[:fg_column])
+        sp_rms = pd.DataFrame(columns=df.columns[:cols])
         for key in sp_dict.keys():
             rms_averaged = np.sqrt(np.mean(np.power(np.abs(sp_dict[key]),2), axis=0))
             sp_rms.loc[key] = rms_averaged
@@ -157,24 +160,33 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1,
         sp_rms.index.rename('order of rotating frequency', inplace=True)
         return sp_rms
 
-def get_fft(df: pd.DataFrame, cut_off_freq, frame_len=8192, fs = 48000, overlap = 0.75):
+def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, overlap = 0.75,
+            domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2, rps = None, cols = None):
     '''
     return fft as dataframe type
     
+    :param df: input level vs time signal
+    :param cut_off_freq: cut off frequency for high-pass filter
+
     :param fs: sampling frequency
-    ----
+    :param domain: units of the spectrum x labels
+                'frequency': hz
+                'order': relative to the inner race rotation, fr.
     signal processing step:
     1. subtract dc bias from accelerometer data
-    2. high pass filter
+    2. high pass filter (optional)
     3. do FFT with hanning window frame
     4. get mean of FFT spectrum
     '''
     # subtract dc bias from acc data
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
-    # use high-pass filter to remove dc 
-    filtered_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2, visualize=True)
-    filtered_df = pd.DataFrame(data=filtered_df, columns=df.columns)
-    df_fft = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap)
+    if cut_off_freq > 0:
+        # use high-pass filter to remove dc 
+        filtered_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2, visualize=True)
+        filtered_df = pd.DataFrame(data=filtered_df, columns=df.columns)
+        df_fft = fft(filtered_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap, domain=domain, fg_column = fg_column, pulse_per_round=pulse_per_round, rps=rps, cols = cols)
+    else:
+        df_fft = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap, domain=domain, fg_column=fg_column, pulse_per_round=pulse_per_round, rps=rps, cols = cols)
     return df_fft
 
 def annotatePeaks(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
@@ -253,6 +265,7 @@ def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:t
 def acc_processing(hdf_level_time_filename:str,
                    rename_column_method = None,
                    usecols:list = None,
+                   cols:int = 3,
                    sheets:list = None,
                    state: bool = False, state_result_filename:str = 'state.xlsx', 
                    fft: bool = False, fft_result_filename:str = 'fft.xlsx',
@@ -285,7 +298,7 @@ def acc_processing(hdf_level_time_filename:str,
             df_stats = stat_calc(df)
             df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
         if fft:
-            df_fft = get_fft(df, cut_off_freq=cut_off_freq)
+            df_fft = get_fft(df, cut_off_freq=cut_off_freq, cols=cols)
             #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))        
             df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
         if psd:
@@ -355,27 +368,8 @@ def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
 
     return df_fft.iloc[idx_list].mean()
 
-def get_fft_wo_filtering(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75, 
-                         domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2):
-    '''
-    return fft as dataframe type
-    
-    :param fs: sampling frequency
-    :param domain: units of the spectrum x labels
-            'frequency': hz
-            'order': relative to the inner race rotation, fr.
-    signal processing step:
-    1. subtract dc bias from accelerometer data
-    2. do FFT with hanning window frame
-    3. get mean of FFT spectrum
-    '''
-    # subtract dc bias from acc data
-    detrend_df = df - np.mean(df.to_numpy(), axis=0)
-    df_fft = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=frame_len*overlap, domain=domain, fg_column=fg_column, pulse_per_round=pulse_per_round)
-    return df_fft
-
 def acc_processing_ver2(dir:str, 
-                        state: bool = False, state_result_filename:str = 'state.xlsx', 
+                        state: bool = False, state_result_filename:str = 'state.xlsx', cols = None,
                         fft: bool = False, fft_result_filename:str = 'fft.xlsx', domain: Literal["frequency", "order"] = "frequency"):
     """
     read level vs time .xlsx file, loop for each file in the directory, read as panda data frame and do selected processing, 
@@ -406,7 +400,7 @@ def acc_processing_ver2(dir:str,
                 df_stats = stat_calc(df)
                 df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
             if fft:
-                df_fft = get_fft_wo_filtering(df, fs=51200, domain=domain)
+                df_fft = get_fft(df, fs=51200, domain=domain, cols=cols)
                 with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
                     df_fft.to_excel(writer, sheet_name=file_name[:-5])
 
@@ -558,22 +552,33 @@ def binary_search(arr, low, high, x):
     else:
         return low
 
-def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, x):
+def annotateFreqBands(axes: matplotlib.axes.Axes, fb: BearingFaultBands, alpha):
     '''
     Annotate bearing frequency bands in different color based on its fault group.
     Note: the input axes should use constrained layout
     
     :param axes: subplots for annotation
     :param fb: bearing fault bands
-    :param x: x-axis of subplots, which is the index of frequency spectrum
+    :param x: x-axis of subplots, which is an array with a specified range and step increment
     '''
+    left, right = axes.get_xlim()
+    step = (fb.fault_bands[0][1] - fb.fault_bands[0][0])/2
+    x = np.arange(left, right, step)
     length = len(x)
-    color_arr = ['red', 'yellow', 'green', 'blue']
+    color_arr = ['red', 'orange', 'green', 'blue']
+    mask_arr = []
+    for i in range(0,4):
+        mask_arr.append(np.zeros(length))
+    
     for (x1, x2), g, s in zip(fb.fault_bands, fb.info.FaultGroups, fb.info.Labels):
-        mask_arr = np.zeros(length)
-        mask_arr[binary_search(x, 0, length - 1, x1):binary_search(x, 0, length - 1, x2)] = 1
-        axes.fill_between(x, 0, 1, where= mask_arr, color= color_arr[g-1], alpha=0.25, transform=axes.get_xaxis_transform())
+        if (x1 > x[-1]): 
+            continue
+        mask_arr[g - 1][binary_search(x, 0, length - 1, x1):binary_search(x, 0, length - 1, x2)] = 1
         axes.annotate(s, xy=(x1, 0.95), xycoords=('data', 'subfigure fraction'), rotation='vertical', verticalalignment='top')
+    
+    for i in range(0, 4):
+        axes.fill_between(x, 0, 1, where= mask_arr[i], color= color_arr[i], alpha=alpha, transform=axes.get_xaxis_transform())
+    
     axes.annotate('Cage defect frequency, Fc\nBall defect frequency, Fb\nOuter race defect frequency, Fo\nInner race defect frequency, Fi\n',
                   xy=(0.95, 0.05), xycoords='subfigure fraction', horizontalalignment='right')
     
@@ -630,18 +635,59 @@ def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
     rps[start:] = rps[start - 1]    
     return rps
 
-def level_and_rpm_seperate_processing(hdf_level_time_filename, level_sheet, level_col, hdf_rpm_time_filename = None, rpm_sheet = None, fft_filename = None, fft_sheet = None):
+def level_and_rpm_seperate_processing(hdf_level_time_filename:str, level_sheet:str, level_col:list, fs = 48000, 
+                                      hdf_rpm_time_filename = None, rpm_sheet = None, fs_rpm = 1000,
+                                      nperseq = 8192, overlap = 0.75, fft_filename = None, fft_sheet = None):
     '''
     read seperate **level_vs_time.hdf** and **rpm_vs_time.hdf**, with different sampling frequency, to calculate
     FFT based on rpm rotating speed, in order to compare different sample with normalized rotating frequency order
     and output the FFT order result to specified file
+
+    :param hdf_level_time_filename: level_vs_time.hdf transported excel
+    :param level_sheet: sheet name
+    :param level_col: used columns
+    :param fs: sampling frequency
+    :param hdf_rpm_time_filename: rpm_vs_time.hdf transported excel
+    :param rpm_sheet: sheet name
+    :param fs_rpm: rpm_vs_time.hdf sampling frequency, if it is lower than lever_vs_time, than use duplicate for sample augmentation
+    :param nperseq: number of sample per frame
+    :param overlap: percentage of overlape
+    :param fft_filename: output fft file name
+    :param fft_sheet: output fft sheet name, can be append to an exist fft result file as seperate sheet 
+
+    example:
+    sound_hdf = '../../test_data//20240808//good-100%-18300.Level vs. Time.xlsx'
+    rpm_hdf = '../../test_data//20240814//1833-20%.RPM vs. Time.xlsx'
+    fft_file = '../../test_data//20240808//fft_order.xlsx'
+    level_and_rpm_seperate_processing(hdf_level_time_filename=sound_hdf, hdf_rpm_time_filename=rpm_hdf, level_sheet='Sheet22', level_col=[0,1], rpm_sheet='Sheet1',
+                                      fft_filename=fft_file, fft_sheet='1833')
     '''
     workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
     title = workbook[level_sheet]["B5"].value
-    df = pd.read_excel(hdf_level_time_filename, sheet_name=level_sheet, header=0, index_col=0, skiprows=13)
+    df = pd.read_excel(hdf_level_time_filename, sheet_name=level_sheet, header=0, index_col=0, skiprows=13, usecols=level_col)
     # rewrite column title adding title
     df.rename(columns=lambda x:title.split()[0], inplace=True)
-    # continue...
+    df_rpm = pd.read_excel(hdf_rpm_time_filename, sheet_name=rpm_sheet, header=0, index_col=0, skiprows=13, usecols="A:B")
+    # calculate frame
+    df_rpm = df_rpm.loc[df_rpm.index.repeat(fs/fs_rpm)]
+    df_rpm.reset_index(drop=True, inplace=True)
+    frames = librosa.util.frame(df_rpm, frame_length=nperseq, hop_length=int(nperseq*(1-overlap)), axis=0)
+    rps = []
+    for frame in frames:
+        rps.append(np.round(np.mean(frame, axis=0)/60))
+    df_fft = get_fft(df, cut_off_freq = 10, fs = fs, frame_len=nperseq, overlap = overlap,
+                     domain="order", pulse_per_round = 2, rps = rps, cols = 1)
+    # if file not exist
+    if not os.path.exists(fft_filename):
+        wb = openpyxl.Workbook()
+        wb.save(fft_filename)
+        wb.close()
+    with pd.ExcelWriter(fft_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+        df_fft.to_excel(writer, sheet_name=fft_sheet)
+        if 'Sheet' in writer.book.sheetnames:
+            writer.book.remove(writer.book['Sheet'])
+        writer.book.save(fft_filename)
+        writer.book.close()
     
 def compare_rps_of_rpm_vs_time_file(dir):
     df_dict = {}
@@ -764,21 +810,37 @@ def plot_df_each_col_a_fig(df_dict:{pd.DataFrame}, types: list, axs: np.ndarray,
                     break
 
 if __name__ == '__main__':
-    hdf_level_time_filename = '../../test_data//20240919//sound_acc//20240919#4073_10s_20%-UD.Level vs. Time.xlsx'
-    fft_filename = '../../test_data//20240919//fft_4073_ud.xlsx'
-    def rename_col(df:pd.DataFrame, title:str):
-        df.rename(columns=lambda x:'4073_ud_' + x.split()[0], inplace=True)
-    acc_processing(hdf_level_time_filename=hdf_level_time_filename, rename_column_method=rename_col, usecols="A:F", fft=True, cut_off_freq=10, fft_result_filename=fft_filename)
-
     #savefftplot(df_fft, [0], False, True, False, acc_file_dir)
     #peak_dict = compare_peak_from_fftdataframe(df_fft)
     #print(class_average_peak(peak_dict, df_fft))
     #df_fft = pd.read_excel('sp_rms.xlsx', header=0, index_col=0)
     #fig, ax = plt.subplots(layout='constrained')
     #df_fft.plot(logx=True, title='ordered frequency spectrum', xlabel='order of rotation speed', ylabel='Amplitude', logy=True, ax=ax)
-    #fb = bearingFaultBands(fr=1, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 6), domain='order')
-    #annotateFreqBands(ax, fb, df_fft.index)
-
+    '''
+    fb = bearingFaultBands(fr=44, nb=6, db=1.5875, dp=5.645, beta=0, harmonics=range(1, 40), domain='order', width=0.1)
+    for sheet in df:
+        if not (sheet.startswith('001833') or sheet.startswith('004073')):
+            continue
+        for col in range(len(df[sheet].columns)):
+            fig, ax = plt.subplots(layout='constrained')
+            ax.plot(df[sheet].index, df[sheet].iloc[:, col], color=color['blue'], label=df[sheet].columns[col])
+            if sheet.startswith('001833'):
+                ax.plot(df_sound.index, df_sound['1833-20%'], color=color['red'], label='sound')
+            if sheet.startswith('004073'):
+                ax.plot(df_sound.index, df_sound['4073-20%-2680'], color=color['red'], label='sound')
+            if sheet.endswith('lr'):
+                ax.plot(df['000045_lr'].index, df['000045_lr'].iloc[:, col], color=color['green'], label=df['000045_lr'].columns[col])
+            if sheet.endswith('ud'):
+                ax.plot(df['000045_ud'].index, df['000045_ud'].iloc[:, col], color=color['green'], label=df['000045_ud'].columns[col])
+            ax.set_xlim(0, 115)
+            ax.set_yscale("log")
+            ax.set_xlabel('order of rotating frequency')
+            ax.set_ylabel('Amplitude')
+            ax.legend()
+            annotateFreqBands(ax, fb, 0.4)     
+            plt.show()
+            break
+    '''
 #imf_x = imf[:,0,:] #imfs corresponding to 1st component
 #imf_y = imf[:,1,:] #imfs corresponding to 2nd component
 #imf_z = imf[:,2,:] #imfs corresponding to 3rd component
