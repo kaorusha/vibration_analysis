@@ -105,9 +105,9 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
         plt.show()
     return output
 
-def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1, fg_column=3, pulse_per_round=2, rps:list = None):
+def fft(df:pd.DataFrame, fs = 1, nperseq=8192, window = np.hanning(8192), noverlap=8192//2, axis=1, fg_column=3, pulse_per_round=2, rps:list = None):
     """
-    do FFT with hanning window frame, return complex number of each window frame
+    do FFT with window frame, return complex number of each window frame, and if the rps is None also fg_column is provided, return the rps of each frame
     
     :param df: input acc data, each column represents a sequence signal of accelerometers, and the last column is the fg sensor.
     :param fs: sampling frequency
@@ -119,7 +119,6 @@ def fft(df:pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2, axis=1, fg_colu
     :param rps: rounds per second of each frame as a list with same length of frames, if not provided than should give fg_column
     """
     frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
-    window = np.hanning(nperseq)
     windowed_frames = np.empty(frames.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
     for col in range(frames.shape[-1]):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
@@ -166,7 +165,6 @@ def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, nove
     if cut_off_freq > 0:
         # use high-pass filter to remove dc
         detrend_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2, visualize=True)
-    detrend_df = pd.DataFrame(data=detrend_df, columns=df.columns)
     freq, sp, rps = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=noverlap, fg_column=fg_column, pulse_per_round=pulse_per_round, rps=rps)
     
     # Average over windows
@@ -218,20 +216,32 @@ def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, nove
         
     return sp_averaged
 
-def annotatePeaks(a: Any, freq: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None):    
+def annotatePeaks(x: Any, y: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None, dot = None, 
+                  annotateX=True, annotateY=False,
+                  rotation = 45, 
+                  xytext=(0, 30), textcoords='offset pixels',
+                  arrowprops = dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3")):    
     """
     analysis the peak and add annotation on the graph
+
+    :param x: 1d array index
+    :param y: 1d array (note: if it is a spectrum, remember to use absolute value)
     
-    :param a: 1d array spectrum absolute value
-    :param freq: 1d array frequency
     """
-    peaks, dic = signal.find_peaks(a, prominence=prominence)
+    peaks, dic = signal.find_peaks(y, prominence=prominence)
     if ax != None:
         for idx in peaks:
-            ax.annotate('%d'%freq[idx], 
-                        xy=(freq[idx], a[idx]), rotation=45, xycoords='data',
-                        xytext=(0, 30), textcoords='offset pixels',
-                        arrowprops=dict(facecolor='blue', arrowstyle="->", connectionstyle="arc3"))
+            if dot != None:
+                ax.plot(x[idx], y[idx], dot)
+            string = ''
+            if annotateX:
+                string += '%.2f'%x[idx]
+            if annotateY:
+                string += ', %.2f'%y[idx]
+            ax.annotate(string, 
+                        xy=(x[idx], y[idx]), rotation=rotation, xycoords='data',
+                        xytext=xytext, textcoords=textcoords,
+                        arrowprops=arrowprops)
     return peaks
 
 def test_emd():
@@ -778,11 +788,15 @@ def acc_processing_coherence(good_sample_dir:str, dir: str, good_sample_num:str,
 
 def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, fg_column = 3,
               rps_x = None, rps_y = None, average:Literal['mean', 'median'] = 'mean'):
-    freq_x, fft_x, rps_x = fft(df=x, fs=fs, nperseq=nperseg, noverlap=noverlap, fg_column=fg_column, rps=rps_x)
+    win = np.hanning(nperseg)
+    # detrend
+    detrend_x = x - np.mean(x.to_numpy(), axis=0)
+    freq_x, fft_x, rps_x = fft(detrend_x, fs=fs, nperseq=nperseg, window=win, noverlap=noverlap, fg_column=fg_column, rps=rps_x)
     if x.equals(y):
         freq_y, fft_y, rps_y = freq_x, fft_x, rps_x
     else:
-        freq_y, fft_y, rps_y = fft(df=y, fs=fs, nperseq=nperseg, noverlap=noverlap, fg_column=fg_column, rps=rps_y)
+        detrend_y = y - np.mean(y.to_numpy(), axis=0)
+        freq_y, fft_y, rps_y = fft(detrend_y, fs=fs, nperseq=nperseg, window=win, noverlap=noverlap, fg_column=fg_column, rps=rps_y)
     
     Pxy = np.empty(fft_x[:,:,:cols].shape, dtype=np.complex128)
     Pxy_dict = {}
@@ -794,7 +808,7 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         freq_order_y = freq_y/rps_y[frame] if not (x.equals(y)) else freq_order_x
 
         if rps_x[frame] == rps_y[frame]:
-            Pxy[frame,:,:] = fft_x[frame,:,:cols] * np.conjugate(fft_y[frame,:,:cols])
+            Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols]
             # updating dictionary
             for order in range(len(freq_order_x)):
                 key = freq_order_x[order]
@@ -805,7 +819,7 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         else:
             for order in range(len(freq_order_x)):
                 idx = binary_search(arr=freq_order_y, low=0, high=len(freq_order_y) - 1, x=freq_order_x[order])
-                Pxy[frame, order, :] = fft_x[frame, order, :cols] * fft_y[frame, idx, :cols]
+                Pxy[frame, order, :] = np.conjugate(fft_x[frame, order, :cols]) * fft_y[frame, idx, :cols]
                 # updating dictionary
                 key = freq_order_x[order]
                 if key in Pxy_dict:
@@ -824,6 +838,15 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
             Pxy_averaged.loc[freq_order] = np.mean(Pxy_dict[freq_order], axis=0)
         else:
             raise ValueError('choose from specified methods')
+    # scaling for power spectral density
+    scale = 1.0 / (fs * (win*win).sum())
+    Pxy_averaged *= scale
+    # input signal is real so the rfft amplitude *2
+    if nperseg % 2:
+        Pxy_averaged.iloc[1:, :] *= 2
+    else:
+    # Last point is unpaired Nyquist freq point, don't double
+        Pxy_averaged.iloc[1:-1, :] *= 2
         
     return Pxy_averaged.index, Pxy_averaged.to_numpy()
 
@@ -869,9 +892,9 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
             idx = binary_search(orders_y, 0, len(orders_y) - 1, order)
             mapping_list.append(idx)
         
-        Cxy = pd.DataFrame(np.abs(Pxy)**2 / Pxx / Pyy[mapping_list, :], index=orders_x)
+        Cxy = pd.DataFrame(np.abs(Pxy)**2 / np.real(Pxx) / np.real(Pyy)[mapping_list, :], index=orders_x)
         Cxy.index.rename('order of rotating frequency', inplace=True)
-    
+    '''
     # visualize    
     fig, axs = plt.subplots(cols, 1, layout='constrained', sharex=True)
     
@@ -879,11 +902,12 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     Cxy.columns = column_name
     for i in range(cols):
         ax = axs if cols == 1 else axs[i]
-        Cxy.iloc[:,i].plot(ax=ax, legend=True, xlabel=Cxy.index.name, ylabel='Coherence', logx=True, logy=False)
+        Cxy.iloc[:,i].plot(ax=ax, legend=True, xlabel=Cxy.index.name, ylabel='Coherence', logx=False, logy=False, xlim=(0,25))
         ax.grid(visible=True, which='both', axis='both')
         if i == 0:
             ax.set_title('Coherence (average type: %s)'%average)
     plt.show()
+    '''
     return Cxy
 
 def corr(df:pd.DataFrame, result_filename:str):
@@ -963,15 +987,53 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean'):
     frame_len = 8192
     n = fs * 10
     t = np.arange(n)/fs
-    f1 = 45.75
-    f2 = 45.75
+    f1 = 40.75
+    f2 = 40.75
     
     x = 10 * np.sin(2 * np.pi * f1 * t) + 10 * np.sin(2 * np.pi * 2 * f1 * t) + 10 * np.sin(2 * np.pi * 3 * f1 * t) + 0.5 * np.random.randn(n)
     y = 15 * np.sin(2 * np.pi * f2 * t + np.pi / 4) + 10 * np.sin(2 * np.pi * 2 * f2 * t) + 10 * np.sin(2 * np.pi * 3 * f2 * t) + 0.5 * np.random.randn(n)
     nframe = int(n / (frame_len/4) - (4 - 1))
-    #freq_csd, Pxy = signal.csd(x, y, fs, nperseg=frame_len, noverlap=frame_len*0.75, average=average)
-    freq_csd, Pxy = csd_order(x=pd.DataFrame(x, columns=['x']), y=pd.DataFrame(y, columns=['y']), fs=fs, nperseg=frame_len, noverlap=frame_len*0.75, cols=1,
+    freq_csd, Pxy = signal.csd(x, y, fs, nperseg=frame_len, noverlap=frame_len*0.75, average=average)
+    freq_csd2, Pxy2 = csd_order(x=pd.DataFrame(x, columns=['x']), y=pd.DataFrame(y, columns=['y']), fs=fs, nperseg=frame_len, noverlap=frame_len*0.75, cols=1,
                               rps_x=[43.75 for i in range(nframe)], rps_y=[43.75 for i in range(nframe)], average=average)
+    # debug
+    freq_x, fft_x, rps_x = fft(df=pd.DataFrame(x, columns=['x']), fs=fs, nperseq=frame_len, window=np.hanning(frame_len), noverlap=0.75*frame_len, rps=[43.75 for i in range(nframe)])
+    freq_y, fft_y, rps_y = fft(df=pd.DataFrame(y, columns=['y']), fs=fs, nperseq=frame_len, window=np.hanning(frame_len), noverlap=0.75*frame_len, rps=[43.75 for i in range(nframe)])
+
+    fig, axs = plt.subplots(4, 1, layout='constrained')
+    
+    axs[0].plot(freq_x, np.abs(fft_x[0, :, :]))
+    axs[0].set_xlim(0, 500)
+    axs[0].set_yscale('log')
+    axs[0].set_title('input signal x fft spectrum at first frame, base freq = %.2f'%f1)
+    axs[0].set_xlabel('frequency (Hz)')
+    axs[1].plot(freq_y, np.abs(fft_y[0, :, :]))
+    axs[1].set_xlim(0, 500)
+    axs[1].set_yscale('log')
+    axs[1].set_xlabel('frequency (Hz)')
+    axs[1].set_title('input signal y fft spectrum at first frame, base freq = %.2f'%f2)
+    axs[2].plot(freq_csd, np.abs(Pxy))
+    axs[2].set_xlim(0, 500)
+    axs[2].set_yscale('log')
+    axs[2].set_xlabel('frequency (Hz)')
+    axs[2].set_title('original csd')
+    axs[3].plot(freq_csd2, np.abs(Pxy2))
+    axs[3].set_xlim(0, 12)
+    axs[3].set_yscale('log')
+    axs[3].set_xlabel('order')
+    axs[3].set_title('order csd')
+    # annotate peak
+    annotatePeaks(x=freq_x, y=np.abs(fft_x[0, :, 0]), ax= axs[0], prominence=10e2, rotation = 0,
+                  annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
+    annotatePeaks(x=freq_y, y=np.abs(fft_y[0, :, 0]), ax= axs[1], prominence=10e2, rotation = 0,
+                  annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
+    annotatePeaks(x=freq_csd, y=np.abs(Pxy), ax= axs[2], prominence=10e-3, rotation = 0,
+                  annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
+    annotatePeaks(x=freq_csd2, y=np.abs(Pxy2[:,0]), ax= axs[3], prominence=10e-3, rotation = 0,
+                  annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
+    
+    plt.show()
+    '''
     #freq_cohere, Cxy = signal.coherence(x, y, fs, nperseg=frame_len, noverlap=frame_len*0.75)
     Cxy = coherence(x=pd.DataFrame(x, columns=['x']), y=pd.DataFrame(y, columns=['y']), 
                     fs=fs, nperseg=frame_len, noverlap=frame_len*0.75, cols=1, domain = 'order', 
@@ -996,6 +1058,7 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean'):
     axs[2].set_ylabel('Coherence')
     axs[2].set_xlim(0, 25)
     plt.show()
+    '''
 
 def time_dependent_coherence(x: pd.Series, y:pd.Series):
     s1 = TimeSeries(x, sample_rate=51200)
