@@ -799,16 +799,27 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         freq_y, fft_y, rps_y = fft(detrend_y, fs=fs, nperseq=nperseg, window=win, noverlap=noverlap, fg_column=fg_column, rps=rps_y)
     
     Pxy = np.empty(fft_x[:,:,:cols].shape, dtype=np.complex128)
-    Pxy_dict = {}
     # multiply, because the base frequency might be different, hence the frequency array is diveded by different value,
     # the resulting index is not the same for each frame.
     # a dictionary is used to store the multiply result at each order.
+    Pxy_dict = {}
+    
+    # scaling for power spectral density
+    scale = 1.0 / (fs * (win*win).sum())
+    # input signal is real so the rfft amplitude *2, and if nperseq can not divided by 2, the last point is unpaired Nyquist freq point, don't double
+    not_divided_by_2 = nperseg % 2
+
     for frame in range(fft_x.shape[0]):
         freq_order_x = freq_x/rps_x[frame]
         freq_order_y = freq_y/rps_y[frame] if not (x.equals(y)) else freq_order_x
 
         if rps_x[frame] == rps_y[frame]:
-            Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols]
+            Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols] * scale
+            if not_divided_by_2:
+                Pxy[frame,1:-1,:] *= 2
+            else:
+                Pxy[frame,1:,:] *= 2
+            
             # updating dictionary
             for order in range(len(freq_order_x)):
                 key = freq_order_x[order]
@@ -819,21 +830,29 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         else:
             for order in range(len(freq_order_x)):
                 idx = binary_search(arr=freq_order_y, low=0, high=len(freq_order_y) - 1, x=freq_order_x[order])
-                Pxy[frame, order, :] = np.conjugate(fft_x[frame, order, :cols]) * fft_y[frame, idx, :cols]
+                Pxy[frame, order, :] = np.conjugate(fft_x[frame, order, :cols]) * fft_y[frame, idx, :cols] * scale
+                if not_divided_by_2 and order == len(freq_order_x) - 1:
+                    print('nperseq not divided by 2')
+                else:
+                    Pxy[frame, order, :] *= 2
                 # updating dictionary
                 key = freq_order_x[order]
                 if key in Pxy_dict:
                     Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
                 else:
                     Pxy_dict.update({key: Pxy[frame, order, :]})
+    # outputting for debug purpose
+    #fft_frame_to_excel(Pxy, sheet_names=['x vs y'], fft_filename='Pxy.xlsx', index=freq_x)
+        
     # averaging
     Pxy_averaged = pd.DataFrame(columns=x.columns[:cols])
+    same_rps_fix_len_frame_bias = signal._spectral_py._median_bias(fft_x.shape[0])
+    
     for freq_order in Pxy_dict.keys():
         if average == 'median':
-            # calculate the bias of the median of a set of periodograms relative to the mean.
-            n = Pxy_dict[freq_order].shape[0]
-            ii_2 = 2 * np.arange(1., (n-1) // 2 + 1)
-            bias = 1 + np.sum(1. / (ii_2 + 1) - 1. / ii_2)
+            bias = signal._spectral_py._median_bias(Pxy_dict[freq_order].shape[0])
+            if bias != same_rps_fix_len_frame_bias:
+                print('bias %f != fbias %f'%(bias, same_rps_fix_len_frame_bias))
             if np.iscomplexobj(Pxy_dict[freq_order]):
                 Pxy_averaged.loc[freq_order] = (np.median(np.real(Pxy_dict[freq_order]), axis=0) + 1j * np.median(np.imag(Pxy_dict[freq_order]), axis=0))
             else:
@@ -843,15 +862,6 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
             Pxy_averaged.loc[freq_order] = np.mean(Pxy_dict[freq_order], axis=0)
         else:
             raise ValueError('choose from specified methods')
-    # scaling for power spectral density
-    scale = 1.0 / (fs * (win*win).sum())
-    Pxy_averaged *= scale
-    # input signal is real so the rfft amplitude *2
-    if nperseg % 2:
-        Pxy_averaged.iloc[1:, :] *= 2
-    else:
-    # Last point is unpaired Nyquist freq point, don't double
-        Pxy_averaged.iloc[1:-1, :] *= 2
         
     return Pxy_averaged.index, Pxy_averaged.to_numpy()
 
@@ -885,6 +895,7 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         # organize into dataframe
         Cxy = pd.DataFrame(data=np.abs(Pxy)**2 / Pxx / Pyy, index=freqs)
         Cxy.index.rename('frequency [Hz]', inplace=True)
+        x_limit = 5000
     else:
         # order of rotating frequency
         orders_x, Pxx = csd_order(x=x, y=x, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_x, rps_y=rps_x, average=average)
@@ -899,6 +910,7 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         
         Cxy = pd.DataFrame(np.abs(Pxy)**2 / np.real(Pxx) / np.real(Pyy)[mapping_list, :], index=orders_x)
         Cxy.index.rename('order of rotating frequency', inplace=True)
+        x_limit = 25
     
     # visualize    
     fig, axs = plt.subplots(cols, 1, layout='constrained', sharex=True)
@@ -907,7 +919,7 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     Cxy.columns = column_name
     for i in range(cols):
         ax = axs if cols == 1 else axs[i]
-        Cxy.iloc[:,i].plot(ax=ax, legend=True, xlabel=Cxy.index.name, ylabel='Coherence', logx=False, logy=False, xlim=(0,25))
+        Cxy.iloc[:,i].plot(ax=ax, legend=True, xlabel=Cxy.index.name, ylabel='Coherence', logx=False, logy=False, xlim=(0,x_limit))
         ax.grid(visible=True, which='both', axis='both')
         if i == 0:
             ax.set_title('Coherence (average type: %s)'%average)
@@ -986,14 +998,34 @@ def plot_df_each_col_a_fig(df_dict:{pd.DataFrame}, types: list, axs: np.ndarray,
                     axs[i].plot(df_dict[sheet].index, df_dict[sheet][col_name], **arg)
                     break
 
+def fft_frame_to_excel(fft_frame:np.ndarray, sheet_names:list, fft_filename:str, index:np.ndarray):
+    '''
+    output a not averaged fft frames into excel, the shape of input frames should be [windowed_frame, frequency, column]
+    the column >= 1 represnets the input channels
+    '''
+    # if file not exist
+    if not os.path.exists(fft_filename):
+        wb = openpyxl.Workbook()
+        wb.save(fft_filename)
+        wb.close()
+    
+    for sheet in range(len(sheet_names)):
+        df_fft = pd.DataFrame(fft_frame[:,:,sheet].transpose(), index=index, columns=range(fft_frame.shape[0]))
+        with pd.ExcelWriter(fft_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+            df_fft.to_excel(writer, sheet_name=sheet_names[sheet])
+            if 'Sheet' in writer.book.sheetnames:
+                writer.book.remove(writer.book['Sheet'])
+            writer.book.save(fft_filename)
+            writer.book.close()
+
 def coherence_test(average:Literal['mean', 'median'] = 'mean', visualize_fig:int = 1):
     np.random.seed(0)
     fs = 51200
     frame_len = 8192
-    n = fs * 1
+    n = 8192*5
     t = np.arange(n)/fs
     f1 = 40.75
-    f2 = 40.75
+    f2 = 41.75
     
     x = 10 * np.sin(2 * np.pi * f1 * t) + 10 * np.sin(2 * np.pi * 2 * f1 * t) + 10 * np.sin(2 * np.pi * 3 * f1 * t) + 0.5 * np.random.randn(n)
     y = 15 * np.sin(2 * np.pi * f2 * t + np.pi / 4) + 10 * np.sin(2 * np.pi * 2 * f2 * t) + 10 * np.sin(2 * np.pi * 3 * f2 * t) + 0.5 * np.random.randn(n)
