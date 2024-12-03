@@ -1,7 +1,7 @@
-from turtle import distance
+import collections
+import copy
 from typing import Any, List
 from typing import Literal
-from unittest import signals
 import librosa
 import matplotlib.axes
 from scipy import signal
@@ -654,6 +654,53 @@ def techometer(fg_signal: pd.DataFrame, thereshold:float, fs:int, pulse_per_roun
                 state = False
     return rps
 
+def cycle_detect(fg_signal:pd.DataFrame, thereshold:float, pulse_per_round:int):
+    '''
+    :param fg_signal: square wave signal array
+    :param thereshold: count for rising edge
+    :param pulse_per_round: pulse numbers per round
+    
+    returns
+    ------
+    marked the begining of each cycle
+    '''
+    counter = -1
+    state = (fg_signal[0] > 0)
+    cycle_begin_index = []
+    for i in range(len(fg_signal)):
+        if fg_signal[i] > thereshold:
+            if state == False:
+                state = True
+                counter += 1
+                if counter % pulse_per_round == 0:
+                    cycle_begin_index.append(i)
+                    counter %= pulse_per_round
+        else:
+            state = False
+    return cycle_begin_index
+
+def slice_frame(input:pd.DataFrame, upr_limit:int, lwr_limit:int, cycle_len:int, NumRotations=10):
+    cycle_begin_index = cycle_detect(input.iloc[:,3], 0, 2)
+    # detrend
+    signal.detrend(input, axis=0, type='constant', overwrite_data=True)
+    # resample to specified length
+    cycle_frame = None
+    for i in range(1, len(cycle_begin_index)):
+        length = cycle_begin_index[i] - cycle_begin_index[i - 1]
+        if length > lwr_limit and length < upr_limit:
+            original_cycle = input.iloc[cycle_begin_index[i - 1]:cycle_begin_index[i], :3]
+            resampled_cycle = signal.resample(original_cycle, cycle_len)
+            if cycle_frame is None:
+                cycle_frame = resampled_cycle.reshape((1, resampled_cycle.shape[0], resampled_cycle.shape[1]))
+            else:
+                resampled_cycle = resampled_cycle.reshape((1, resampled_cycle.shape[0], resampled_cycle.shape[1]))
+                cycle_frame = np.concatenate((cycle_frame, resampled_cycle), axis=0)
+    # time synchronous average for every NumRotations frame
+    for i in range(cycle_frame.shape[0] - NumRotations):
+        cycle_frame[i, :, :3] = np.mean(cycle_frame[i:i+NumRotations, :, :3], axis=0)
+    
+    return cycle_frame[:-NumRotations, :, :3]
+
 def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
     '''
     use fg signal to get the fft and find the rotation speed in hz
@@ -789,15 +836,36 @@ def acc_processing_coherence(good_sample_dir:str, dir: str, good_sample_num:str,
 
 def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, fg_column = 3,
               rps_x = None, rps_y = None, average:Literal['mean', 'median'] = 'mean'):
+    '''
+    the time domain is transfered to order domain, every data sample in the input signal represnet the same increment of rotation angle,
+    x and y input signal has the same sampling angle.
+    
+    :param fs: sampling frequency within one ratation cycle
+
+    '''
     win = np.hanning(nperseg)
+
+    frames_x = slice_frame(x, upr_limit=1400, lwr_limit=1100, cycle_len=1024)
     # detrend
-    detrend_x = x - np.mean(x.to_numpy(), axis=0)
-    freq_x, fft_x, rps_x = fft(detrend_x, fs=fs, nperseq=nperseg, window=win, noverlap=noverlap, fg_column=fg_column, rps=rps_x)
+    signal.detrend(frames_x, axis=1, type='constant', overwrite_data=True) 
+    # fft
+    windowed_frames_x = np.empty(frames_x.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
+    for col in range(frames_x.shape[-1]):
+        np.multiply(win, frames_x[:,:,col], out=windowed_frames_x[:,:,col])
+    fft_x = np.fft.rfft(windowed_frames_x, n=nperseg, axis=1, norm='backward')
+    freq_x = np.fft.rfftfreq(n=nperseg, d=1./fs)
     if x.equals(y):
-        freq_y, fft_y, rps_y = freq_x, fft_x, rps_x
+        freq_y, fft_y = freq_x, fft_x
     else:
-        detrend_y = y - np.mean(y.to_numpy(), axis=0)
-        freq_y, fft_y, rps_y = fft(detrend_y, fs=fs, nperseq=nperseg, window=win, noverlap=noverlap, fg_column=fg_column, rps=rps_y)
+        frames_y = slice_frame(y, upr_limit=1400, lwr_limit=1100, cycle_len=1024)
+        # detrend
+        signal.detrend(frames_y, axis=1, type='constant', overwrite_data=True) 
+        # fft
+        windowed_frames_y = np.empty(frames_y.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
+        for col in range(frames_y.shape[-1]):
+            np.multiply(win, frames_y[:,:,col], out=windowed_frames_y[:,:,col])
+        fft_y = np.fft.rfft(windowed_frames_y, n=nperseg, axis=1, norm='backward')
+        freq_y = np.fft.rfftfreq(n=nperseg, d=1./fs)
     
     Pxy = np.empty(fft_x[:,:,:cols].shape, dtype=np.complex128)
     # multiply, because the base frequency might be different, hence the frequency array is diveded by different value,
@@ -810,24 +878,25 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     # input signal is real so the rfft amplitude *2, and if nperseq can not divided by 2, the last point is unpaired Nyquist freq point, don't double
     not_divided_by_2 = nperseg % 2
 
-    for frame in range(fft_x.shape[0]):
-        freq_order_x = freq_x/rps_x[frame]
-        freq_order_y = freq_y/rps_y[frame] if not (x.equals(y)) else freq_order_x
+    for frame in range(min(fft_x.shape[0], fft_y.shape[0])):
+        freq_order_x = freq_x
+        freq_order_y = freq_y if not (x.equals(y)) else freq_order_x
 
-        if rps_x[frame] == rps_y[frame]:
-            Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols] * scale
-            if not_divided_by_2:
-                Pxy[frame,1:-1,:] *= 2
+        #if rps_x[frame] == rps_y[frame]:
+        Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols] * scale
+        if not_divided_by_2:
+            Pxy[frame,1:-1,:] *= 2
+        else:
+            Pxy[frame,1:,:] *= 2
+        
+        # updating dictionary
+        for order in range(len(freq_order_x)):
+            key = freq_order_x[order]
+            if key in Pxy_dict:
+                Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
             else:
-                Pxy[frame,1:,:] *= 2
-            
-            # updating dictionary
-            for order in range(len(freq_order_x)):
-                key = freq_order_x[order]
-                if key in Pxy_dict:
-                    Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
-                else:
-                    Pxy_dict.update({key: Pxy[frame, order, :]})
+                Pxy_dict.update({key: Pxy[frame, order, :]})
+        '''
         else:
             for order in range(len(freq_order_x)):
                 idx = binary_search(arr=freq_order_y, low=0, high=len(freq_order_y) - 1, x=freq_order_x[order])
@@ -842,9 +911,9 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
                     Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
                 else:
                     Pxy_dict.update({key: Pxy[frame, order, :]})
+        '''
     # outputting for debug purpose
-    #fft_frame_to_excel(Pxy, sheet_names=['x vs y'], fft_filename='Pxy.xlsx', index=freq_x)
-        
+    #fft_frame_to_excel(Pxy, sheet_names=['Pxy'], fft_filename='Pxy.xlsx', index=freq_x)
     # averaging
     Pxy_averaged = pd.DataFrame(columns=x.columns[:cols])
     same_rps_fix_len_frame_bias = signal._spectral_py._median_bias(fft_x.shape[0])
@@ -903,19 +972,13 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         orders_y, Pyy = csd_order(x=y, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_y, rps_y=rps_y, average=average)
         _, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_x, rps_y=rps_y, average=average)
         
-        # the frequency order might not be the same, select the relative frequency order from original Pyy
-        mapping_list = []
-        for order in orders_x:
-            idx = binary_search(orders_y, 0, len(orders_y) - 1, order)
-            mapping_list.append(idx)
-        
-        Cxy = pd.DataFrame(np.abs(Pxy)**2 / np.real(Pxx) / np.real(Pyy)[mapping_list, :], index=orders_x)
+        Cxy = pd.DataFrame(np.abs(Pxy)**2 / np.real(Pxx) / np.real(Pyy), index=orders_x)
         Cxy.index.rename('order of rotating frequency', inplace=True)
-        x_limit = 25    
+        x_limit = orders_x[-1]
     
     column_name = ['%s vs %s'%(x.columns[i], y.columns[i]) for i in range(cols)]
     Cxy.columns = column_name
-    
+
     # visualize
     if visualize:
         fig, axs = plt.subplots(cols, 1, layout='constrained', sharex=True)
@@ -1021,19 +1084,20 @@ def fft_frame_to_excel(fft_frame:np.ndarray, sheet_names:list, fft_filename:str,
             writer.book.save(fft_filename)
             writer.book.close()
 
-def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b11111):
+def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b01011):
     np.random.seed(0)
     fs = 51200
     frame_len = 8192
     n = 8192*5
     t = np.arange(n)/fs
-    f1 = 40.75
-    f2 = 41.75
+    # to be the factor of fs for simplicity
+    f1 = 40
+    f2 = 50
     
-    x = pd.DataFrame(10 * np.sin(2 * np.pi * f1 * t) + 10 * np.sin(2 * np.pi * 2 * f1 * t) + 10 * np.sin(2 * np.pi * 3 * f1 * t) + 0.5 * np.random.randn(n), columns=['x'])
-    y = pd.DataFrame(15 * np.sin(2 * np.pi * f2 * t + np.pi / 4) + 10 * np.sin(2 * np.pi * 2 * f2 * t) + 10 * np.sin(2 * np.pi * 3 * f2 * t) + 0.5 * np.random.randn(n), columns=['y'])
-    #x = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A", nrows=n)
-    #y = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000785_lr.xlsx', header=0, usecols="A", nrows=n)
+    #x = pd.DataFrame(10 * np.sin(2 * np.pi * f1 * t) + 10 * np.sin(2 * np.pi * 2 * f1 * t) + 10 * np.sin(2 * np.pi * 3 * f1 * t) + 0.5 * np.random.randn(n), columns=['x'])
+    #y = pd.DataFrame(15 * np.sin(2 * np.pi * f2 * t + np.pi / 4) + 10 * np.sin(2 * np.pi * 2 * f2 * t) + 10 * np.sin(2 * np.pi * 3 * f2 * t) + 0.5 * np.random.randn(n), columns=['y'])
+    x = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D", nrows=n)
+    y = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000785_lr.xlsx', header=0, usecols="A:D", nrows=n)
     
     nframe = int(n / (frame_len/4) - (4 - 1))
     # visualize
@@ -1082,10 +1146,10 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b11111
         idx += 1
     if plot_mask & 0b01000:
         # csd_order
-        freq_csd, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=frame_len, noverlap=frame_len*0.75, cols=1,
+        freq_csd, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=1024, noverlap=frame_len*0.75, cols=3,
                               rps_x=[43.75 for i in range(nframe)], rps_y=[43.75 for i in range(nframe)], average=average)
         axs[idx].plot(freq_csd, np.abs(Pxy))
-        axs[idx].set_xlim(0, 12)
+        #axs[idx].set_xlim(0, 12)
         axs[idx].set_yscale('log')
         axs[idx].set_xlabel('order')
         axs[idx].set_ylabel('CSD [V**2/Hz]')
@@ -1115,10 +1179,10 @@ def time_dependent_coherence(x: pd.Series, y:pd.Series):
     plot.show()
 
 if __name__ == '__main__':
-    coherence_test(average='median')
-    #normal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D")
-    #abnormal_df = pd.read_excel('../../test_data//20240911_good_samples//acc_data//000039_lr.xlsx', header=0, usecols="A:D")
-    #coherence(x=normal_df, y=abnormal_df, fs=51200, nperseg=8192, noverlap=8192*0.75, cols=3, domain='order', average='mean')
+    #coherence_test(average='median')
+    normal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D")
+    abnormal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//001833_lr.xlsx', header=0, usecols="A:D")
+    coherence(x=normal_df, y=abnormal_df, fs=1024, nperseg=1024, noverlap=8192*0.75, cols=3, domain='order', average='mean', visualize=True)
     #normal_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3], combine=True)
     #abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3], combine=True)
     #df_fft = pd.concat([normal_fft_df, abnormal_fft_df], axis=1)
@@ -1126,3 +1190,14 @@ if __name__ == '__main__':
     #m = scipy.spatial.distance.squareform(distvec)
     #matrix = pd.DataFrame(1-m, index=df_fft.columns, columns=df_fft.columns)
     #matrix.to_excel('cosine_similarity.xlsx')
+    '''
+    dir = '../../test_data//Defective_products_on_line_20%//acc_data//'
+    for file_name in os.listdir(dir):
+        if file_name.endswith('.xlsx'):
+            df = pd.read_excel(dir + file_name, header=0, usecols="A:D")
+            idx = cycle_frame(df.iloc[:,3], 0, 2)
+            y = []
+            for i in range(1, len(idx)):
+                y.append(idx[i] - idx[i-1])
+            print(file_name.split('/')[-1][:-5], collections.Counter(y).most_common()[:5])
+    '''
