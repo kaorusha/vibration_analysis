@@ -106,34 +106,47 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
         plt.show()
     return output
 
-def fft(df:pd.DataFrame, fs = 1, nperseq=8192, window = np.hanning(8192), noverlap=8192//2, axis=1, fg_column=3, pulse_per_round=2, rps:list = None):
+def fft(df:pd.DataFrame, fs = 1, nperseg=8192, window = np.hanning(8192), noverlap=8192//2, fg_column=3, pulse_per_round=2, nfft=None, 
+        domain: Literal["frequency", "order"] = "frequency", usecol=3):
     """
     do FFT with window frame, return complex number of each window frame, and if the rps is None also fg_column is provided, return the rps of each frame
     
     :param df: input acc data, each column represents a sequence signal of accelerometers, and the last column is the fg sensor.
     :param fs: sampling frequency
-    :param nperseq: number of samples of each window frame
-    :param noverlap: overlapping samples
-    :param axis: rfft along windowed frame data axis, the shape of windowed frame is [number of frames, nperseq, columns number of input df]
+    :param nperseg: number of samples of each window frame. In the order domain, this is estimated by fs/average_rotating_frequency.
+    :param noverlap: overlapping samples. In the order domain, this is used for time synchronized average for every noverlap cycles.
     :param fg_column: fg signal as square wave, usually the last column number of input data frame, unused if rps is given.
     :param pulse_per_round: fg sensor pulse numbers per round
-    :param rps: rounds per second of each frame as a list with same length of frames, if not provided than should give fg_column
+    :param nfft: controlled the frequency resolution of the spectrum, using zero-padding to increase the resolution as nfft/nperseg
+    :param domain: units of the spectrum x labels
+                'frequency': hz
+                'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
+                         versus the multiples of the inner race rotation cycle, fr. 
+    
+    # order domain analysis
+    Transform the equally time stepped samples into equally angular stepped samples for analysis rotating vibration
+    (https://dsp.stackexchange.com/questions/42345/time-synchronous-averaging-matlab)
+    ## The reason:
+    1. if we divide frequency with rotation frequency to get order, the corresponding order is varying from each frame, that cause the
+        difficulties for the following averaging step. we can't simply get the mean of the transformed result of each frame.
+    2. (crucial )use the fourier transformed result to do cross spectrum, the complex number with varying phase caused by the equal 
+        frame length will cancel each other and cause the csd result vary small and shows no relation to order.
     """
-    frames = librosa.util.frame(df, frame_length=nperseq, hop_length=int(nperseq-noverlap), axis=0)
+    # seperate the original signal into frames
+    if domain == 'frequency':
+        frames = librosa.util.frame(df, frame_length=nperseg, hop_length=int(nperseg-noverlap), axis=0)
+    elif domain == 'order':
+        frames = slice_frame(df, fg_column=fg_column, threshold=0, pulse_per_round=pulse_per_round,
+                             estimated_frame_len=nperseg, resample_len=nfft, NumRotations=noverlap, usecol=usecol)
+        # detrend again for the time synchronous averaged frame
+        signal.detrend(frames, axis=1, type='constant', overwrite_data=True)
+
     windowed_frames = np.empty(frames.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
     for col in range(frames.shape[-1]):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
-    sp = np.fft.rfft(windowed_frames, n=nperseq, axis=axis, norm='backward')
-    freq = np.fft.rfftfreq(n=nperseq, d=1./fs)
-    # get the rotating freq of each frame
-    if rps == None:
-        idx = np.argmax(np.abs(sp[:, :, fg_column]), axis=1)
-        rps = freq[idx]/pulse_per_round
-    
-    if len(rps) != sp.shape[0]:
-        raise ValueError('rps is the rotating frequency of each frame, should be the same length of frames')    
-
-    return freq, sp, rps
+    sp = np.fft.rfft(windowed_frames, n=nfft, axis=1, norm='backward')
+    freq = np.fft.rfftfreq(n=nfft, d=1./fs)
+    return freq, sp
     
 def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, noverlap = 8192*0.75,
             domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2, rps = None, cols = None,
@@ -143,11 +156,13 @@ def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, nove
     
     :param df: input level vs time signal
     :param cut_off_freq: cut off frequency for high-pass filter
-
-    :param fs: sampling frequency
+    :param fs: sampling frequency in one second (frequency domain) or in one cycle(order domain).
+    :param nperseg: number of samples of each window frame
+    :param noverlap: overlapping samples
     :param domain: units of the spectrum x labels
                 'frequency': hz
-                'order': relative to the inner race rotation, fr.
+                'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
+                         versus the multiples of the inner race rotation cycle, fr. 
     :param fg_column: fg signal as square wave, usually the last column number of input data frame, unused if rps is given.
     :param pulse_per_round: fg sensor pulse numbers per round
     :param rps: rounds per second of each frame as a list with same length of frames, if not provided than should give fg_column.
@@ -420,8 +435,10 @@ def acc_processing_ver2(dir:str,
     :param state: whether use the data frame to calculate time domain standard deviation etc..
     :param fft: whether to calculate fast fourier transform
     :param domain: units of the spectrum x labels
-            'frequency': hz
-            'order': relative to the inner race rotation, fr.
+                'frequency': hz
+                'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
+                         versus the multiples of the inner race rotation cycle, fr. 
+    
     """
     if state:
         df_all_stats = pd.DataFrame()
@@ -527,9 +544,10 @@ def bearingFaultBands(fr:float, nb:int, db:float, dp:float, beta:float, harmonic
     :param Sidebands: Sidebands around the fundamental frequency and its harmonics to be included
     0 (default) | vector of nonnegative integers
     :param width: width of the frequency bands centered at the nominal fault frequencies
-    :param domain: units of the fault band frequencies
-            'frequency': hz
-            'order': relative to the inner race rotation, fr.
+    :param domain: units of the spectrum x labels
+                'frequency': hz
+                'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
+                         versus the multiples of the inner race rotation cycle, fr. 
     
     output
     ------
@@ -679,17 +697,25 @@ def cycle_detect(fg_signal:pd.DataFrame, thereshold:float, pulse_per_round:int):
             state = False
     return cycle_begin_index
 
-def slice_frame(input:pd.DataFrame, upr_limit:int, lwr_limit:int, cycle_len:int, NumRotations=10):
-    cycle_begin_index = cycle_detect(input.iloc[:,3], 0, 2)
-    # detrend
-    signal.detrend(input, axis=0, type='constant', overwrite_data=True)
+def slice_frame(input:pd.DataFrame, fg_column:int, threshold:float, pulse_per_round:int, estimated_frame_len:int, resample_len:int, NumRotations:int, usecol:int):
+    '''
+    use fg_signal and pulse_per_round to determine the begine of each cycle, returned the resampled and time-synchronous averaged frame.
+    :param estimated_frame_len: assume the rotation is in the same speed. Remove outliers exceed the speed varying tolerence 20%.
+    :param NumRotations: the output signal frame is averaged every NumRotations
+    '''
+    cycle_begin_index = cycle_detect(input.iloc[:,fg_column], threshold, pulse_per_round)
+    # determine a proper upr_limit and lwr_limit
+    upr_limit = int(estimated_frame_len * 1.2)
+    lwr_limit = int(estimated_frame_len * 0.8)
     # resample to specified length
+    if resample_len is None:
+        resample_len = estimated_frame_len
     cycle_frame = None
     for i in range(1, len(cycle_begin_index)):
         length = cycle_begin_index[i] - cycle_begin_index[i - 1]
         if length > lwr_limit and length < upr_limit:
-            original_cycle = input.iloc[cycle_begin_index[i - 1]:cycle_begin_index[i], :3]
-            resampled_cycle = signal.resample(original_cycle, cycle_len)
+            original_cycle = input.iloc[cycle_begin_index[i - 1]:cycle_begin_index[i], :usecol]
+            resampled_cycle = signal.resample(original_cycle, resample_len)
             if cycle_frame is None:
                 cycle_frame = resampled_cycle.reshape((1, resampled_cycle.shape[0], resampled_cycle.shape[1]))
             else:
@@ -697,9 +723,9 @@ def slice_frame(input:pd.DataFrame, upr_limit:int, lwr_limit:int, cycle_len:int,
                 cycle_frame = np.concatenate((cycle_frame, resampled_cycle), axis=0)
     # time synchronous average for every NumRotations frame
     for i in range(cycle_frame.shape[0] - NumRotations):
-        cycle_frame[i, :, :3] = np.mean(cycle_frame[i:i+NumRotations, :, :3], axis=0)
+        cycle_frame[i, :, :3] = np.mean(cycle_frame[i:i+NumRotations, :, :usecol], axis=0)
     
-    return cycle_frame[:-NumRotations, :, :3]
+    return cycle_frame[:-NumRotations, :, :usecol]
 
 def fg_fft(fg_signal: pd.DataFrame, fs = 1, nperseq=8192, noverlap=8192//2):
     '''
@@ -841,7 +867,6 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     x and y input signal has the same sampling angle.
     
     :param fs: sampling frequency within one ratation cycle
-
     '''
     win = np.hanning(nperseg)
 
@@ -948,13 +973,18 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     :param noverlap: int. Number of points to overlap between segments.
     :param cols: use first int(cols) for fft analysis, this values usually equal to the number of accelerometers.
     :param domain: units of the spectrum x labels
-            'frequency': hz
-            'order': relative to the inner race rotation, fr.
+                'frequency': hz
+                'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
+                         versus the multiples of the inner race rotation cycle, fr. 
     :param fg_column: fg signal as square wave, usually the last column number of input data frame, unused if rps is given.
     :param rps_x: optional, round per second of each frame as a list with same length of frames of signal x.
     :param rps_y: optional, round per second of each frame as a list with same length of frames of signal y.
     :param average: { ‘mean’, ‘median’ },
                     Method to use when averaging periodograms. If the spectrum is complex, the average is computed separately for the real and imaginary parts. Defaults to ‘mean’.
+    # refence of coherence:
+    https://atmos.washington.edu/~dennis/552_Notes_ftp.html Cross Spectrum Analysis Section 6c
+    https://ocw.mit.edu/courses/6-011-introduction-to-communication-control-and-signal-processing-spring-2010/pages/readings/ Chapter 9,10,11
+    https://www.nii.ac.jp/qis/first-quantum/forStudents/lecture/pdf/noise/chapter1.pdf
     '''
     
     if domain == 'frequency':
@@ -1190,14 +1220,3 @@ if __name__ == '__main__':
     #m = scipy.spatial.distance.squareform(distvec)
     #matrix = pd.DataFrame(1-m, index=df_fft.columns, columns=df_fft.columns)
     #matrix.to_excel('cosine_similarity.xlsx')
-    '''
-    dir = '../../test_data//Defective_products_on_line_20%//acc_data//'
-    for file_name in os.listdir(dir):
-        if file_name.endswith('.xlsx'):
-            df = pd.read_excel(dir + file_name, header=0, usecols="A:D")
-            idx = cycle_frame(df.iloc[:,3], 0, 2)
-            y = []
-            for i in range(1, len(idx)):
-                y.append(idx[i] - idx[i-1])
-            print(file_name.split('/')[-1][:-5], collections.Counter(y).most_common()[:5])
-    '''
