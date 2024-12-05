@@ -702,6 +702,7 @@ def slice_frame(input:pd.DataFrame, fg_column:int, threshold:float, pulse_per_ro
     use fg_signal and pulse_per_round to determine the begine of each cycle, returned the resampled and time-synchronous averaged frame.
     :param estimated_frame_len: assume the rotation is in the same speed. Remove outliers exceed the speed varying tolerence 20%.
     :param NumRotations: the output signal frame is averaged every NumRotations
+    https://www.mathworks.com/help/signal/ug/vibration-analysis-of-rotating-machinery.html
     '''
     cycle_begin_index = cycle_detect(input.iloc[:,fg_column], threshold, pulse_per_round)
     # determine a proper upr_limit and lwr_limit
@@ -860,108 +861,67 @@ def acc_processing_coherence(good_sample_dir:str, dir: str, good_sample_num:str,
         writer.book.save(result_filename)
         writer.book.close()
 
-def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, fg_column = 3,
-              rps_x = None, rps_y = None, average:Literal['mean', 'median'] = 'mean'):
+def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, nfft = None, average:Literal['mean', 'median'] = 'mean'):
     '''
     the time domain is transfered to order domain, every data sample in the input signal represnet the same increment of rotation angle,
     x and y input signal has the same sampling angle.
     
     :param fs: sampling frequency within one ratation cycle
+    :param nperseg: estimated samples per cycle
+    :param noverlap: number of rotations used for time synchronous average
+    :param cols: used columns for input signal, corresponds to sensor channals
+    :param nfft : int, optional
+        Length of the FFT used, if a zero padded FFT is desired. If
+        `None`, the FFT length is `nperseg`. Defaults to `None`.
+    :param average:
     '''
     win = np.hanning(nperseg)
 
-    frames_x = slice_frame(x, upr_limit=1400, lwr_limit=1100, cycle_len=1024)
     # detrend
-    signal.detrend(frames_x, axis=1, type='constant', overwrite_data=True) 
-    # fft
-    windowed_frames_x = np.empty(frames_x.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
-    for col in range(frames_x.shape[-1]):
-        np.multiply(win, frames_x[:,:,col], out=windowed_frames_x[:,:,col])
-    fft_x = np.fft.rfft(windowed_frames_x, n=nperseg, axis=1, norm='backward')
-    freq_x = np.fft.rfftfreq(n=nperseg, d=1./fs)
+    signal.detrend(x, axis=0, type='constant', overwrite_data=True) 
+    freq_order_x, fft_x = fft(df=x, fs = fs, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', usecol=cols)
     if x.equals(y):
-        freq_y, fft_y = freq_x, fft_x
+        fft_y = fft_x
     else:
-        frames_y = slice_frame(y, upr_limit=1400, lwr_limit=1100, cycle_len=1024)
         # detrend
-        signal.detrend(frames_y, axis=1, type='constant', overwrite_data=True) 
-        # fft
-        windowed_frames_y = np.empty(frames_y.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
-        for col in range(frames_y.shape[-1]):
-            np.multiply(win, frames_y[:,:,col], out=windowed_frames_y[:,:,col])
-        fft_y = np.fft.rfft(windowed_frames_y, n=nperseg, axis=1, norm='backward')
-        freq_y = np.fft.rfftfreq(n=nperseg, d=1./fs)
-    
-    Pxy = np.empty(fft_x[:,:,:cols].shape, dtype=np.complex128)
-    # multiply, because the base frequency might be different, hence the frequency array is diveded by different value,
-    # the resulting index is not the same for each frame.
-    # a dictionary is used to store the multiply result at each order.
-    Pxy_dict = {}
+        signal.detrend(y, axis=0, type='constant', overwrite_data=True) 
+        _, fft_y = fft(df=y, fs = fs, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', usecol=cols)    
+
+    frame_len = min(fft_x.shape[0], fft_y.shape[0])
+    Pxy = np.empty((frame_len, fft_x.shape[1], cols), dtype=np.complex128)
     
     # scaling for power spectral density
     scale = 1.0 / (fs * (win*win).sum())
     # input signal is real so the rfft amplitude *2, and if nperseq can not divided by 2, the last point is unpaired Nyquist freq point, don't double
     not_divided_by_2 = nperseg % 2
 
-    for frame in range(min(fft_x.shape[0], fft_y.shape[0])):
-        freq_order_x = freq_x
-        freq_order_y = freq_y if not (x.equals(y)) else freq_order_x
+    Pxy[:,:,:] = np.conjugate(fft_x[:frame_len,:,:cols]) * fft_y[:frame_len,:,:cols] * scale
+    if not_divided_by_2:
+        Pxy[:,1:-1,:] *= 2
+    else:
+        Pxy[:,1:,:] *= 2
 
-        #if rps_x[frame] == rps_y[frame]:
-        Pxy[frame,:,:] = np.conjugate(fft_x[frame,:,:cols]) * fft_y[frame,:,:cols] * scale
-        if not_divided_by_2:
-            Pxy[frame,1:-1,:] *= 2
-        else:
-            Pxy[frame,1:,:] *= 2
-        
-        # updating dictionary
-        for order in range(len(freq_order_x)):
-            key = freq_order_x[order]
-            if key in Pxy_dict:
-                Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
-            else:
-                Pxy_dict.update({key: Pxy[frame, order, :]})
-        '''
-        else:
-            for order in range(len(freq_order_x)):
-                idx = binary_search(arr=freq_order_y, low=0, high=len(freq_order_y) - 1, x=freq_order_x[order])
-                Pxy[frame, order, :] = np.conjugate(fft_x[frame, order, :cols]) * fft_y[frame, idx, :cols] * scale
-                if not_divided_by_2 and order == len(freq_order_x) - 1:
-                    print('nperseq not divided by 2')
-                else:
-                    Pxy[frame, order, :] *= 2
-                # updating dictionary
-                key = freq_order_x[order]
-                if key in Pxy_dict:
-                    Pxy_dict[key] = np.vstack([Pxy_dict[key], Pxy[frame, order, :]])
-                else:
-                    Pxy_dict.update({key: Pxy[frame, order, :]})
-        '''
     # outputting for debug purpose
     #fft_frame_to_excel(Pxy, sheet_names=['Pxy'], fft_filename='Pxy.xlsx', index=freq_x)
-    # averaging
-    Pxy_averaged = pd.DataFrame(columns=x.columns[:cols])
-    same_rps_fix_len_frame_bias = signal._spectral_py._median_bias(fft_x.shape[0])
     
-    for freq_order in Pxy_dict.keys():
-        if average == 'median':
-            bias = signal._spectral_py._median_bias(Pxy_dict[freq_order].shape[0])
-            if bias != same_rps_fix_len_frame_bias:
-                print('bias %f != fbias %f'%(bias, same_rps_fix_len_frame_bias))
-            if np.iscomplexobj(Pxy_dict[freq_order]):
-                Pxy_averaged.loc[freq_order] = (np.median(np.real(Pxy_dict[freq_order]), axis=0) + 1j * np.median(np.imag(Pxy_dict[freq_order]), axis=0))
-            else:
-                Pxy_averaged.loc[freq_order] = np.median(Pxy_dict[freq_order], axis = 0)
-            Pxy_averaged.loc[freq_order] /= bias
-        elif average == 'mean':
-            Pxy_averaged.loc[freq_order] = np.mean(Pxy_dict[freq_order], axis=0)
-        else:
-            raise ValueError('choose from specified methods')
-        
-    return Pxy_averaged.index, Pxy_averaged.to_numpy()
+    # Average over windows
+    bias = signal._spectral_py._median_bias(fft_x.shape[0])
 
-def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, domain:Literal['frequency', 'order'] = 'order', fg_column = 3,
-              rps_x = None, rps_y = None, average:Literal['mean', 'median'] = 'mean', visualize=False):
+    if average == 'median':
+        if np.iscomplexobj(Pxy):
+            Pxy = (np.median(np.real(Pxy), axis=0) + 1j * np.median(np.imag(Pxy), axis=0))
+        else:
+            Pxy = np.median(Pxy, axis = 0)
+        Pxy /= bias
+    elif average == 'mean':
+        Pxy = np.mean(Pxy, axis=0)
+    else:
+        raise ValueError('choose from specified methods')
+    
+    return freq_order_x, Pxy
+
+def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, domain:Literal['frequency', 'order'] = 'order',
+              nfft=None, average:Literal['mean', 'median'] = 'mean', visualize=False):
     '''
     rewrite signal.coherence adding domain parameter to get frequency as order of rotating frequency
     adding the average parameter for csd calculation 
@@ -998,9 +958,9 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
         x_limit = 5000
     else:
         # order of rotating frequency
-        orders_x, Pxx = csd_order(x=x, y=x, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_x, rps_y=rps_x, average=average)
-        orders_y, Pyy = csd_order(x=y, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_y, rps_y=rps_y, average=average)
-        _, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, fg_column=fg_column, rps_x=rps_x, rps_y=rps_y, average=average)
+        orders_x, Pxx = csd_order(x=x, y=x, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average)
+        _, Pyy = csd_order(x=y, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average)
+        _, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average)
         
         Cxy = pd.DataFrame(np.abs(Pxy)**2 / np.real(Pxx) / np.real(Pyy), index=orders_x)
         Cxy.index.rename('order of rotating frequency', inplace=True)
@@ -1212,7 +1172,7 @@ if __name__ == '__main__':
     #coherence_test(average='median')
     normal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D")
     abnormal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//001833_lr.xlsx', header=0, usecols="A:D")
-    coherence(x=normal_df, y=abnormal_df, fs=1024, nperseg=1024, noverlap=8192*0.75, cols=3, domain='order', average='mean', visualize=True)
+    coherence(x=normal_df, y=abnormal_df, fs=1024, nperseg=1024, noverlap=10, cols=3, nfft=1024, domain='order', average='mean', visualize=True)
     #normal_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3], combine=True)
     #abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3], combine=True)
     #df_fft = pd.concat([normal_fft_df, abnormal_fft_df], axis=1)
