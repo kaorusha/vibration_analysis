@@ -145,11 +145,11 @@ def fft(df:pd.DataFrame, fs = 1, nperseg=8192, window = np.hanning(8192), noverl
     for col in range(frames.shape[-1]):
         np.multiply(window, frames[:,:,col], out=windowed_frames[:,:,col])
     sp = np.fft.rfft(windowed_frames, n=nfft, axis=1, norm='backward')
-    freq = np.fft.rfftfreq(n=nfft, d=1./fs)
+    freq = np.fft.rfftfreq(n=windowed_frames.shape[1] if nfft == None else nfft, d=1./fs)
     return freq, sp
     
 def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, noverlap = 8192*0.75,
-            domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2, rps = None, cols = None,
+            domain: Literal["frequency", "order"] = "frequency", fg_column=3, pulse_per_round = 2, nfft = None, cols = None,
             average: Literal["rms", "mean", "median"] = "rms"):
     '''
     return fft as dataframe type
@@ -181,55 +181,31 @@ def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, frame_len=8192, nove
     if cut_off_freq > 0:
         # use high-pass filter to remove dc
         detrend_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2, visualize=True)
-    freq, sp, rps = fft(detrend_df, fs=fs, nperseq=frame_len, noverlap=noverlap, fg_column=fg_column, pulse_per_round=pulse_per_round, rps=rps)
+    freq, sp = fft(detrend_df, fs=fs, nperseg=frame_len, window=np.hanning(frame_len), noverlap=noverlap, fg_column=fg_column, pulse_per_round=pulse_per_round, 
+                   nfft=nfft, domain=domain, usecol=cols)
     
     # Average over windows
     sp = sp[:,:,:cols] # get the used range
-    if domain == 'frequency':
-        if average == 'rms':
-            sp_averaged = np.sqrt(np.mean(np.power(np.abs(sp),2), axis=0))
-        elif average == 'median':
-            # np.median must be passed real arrays for the desired result
-            if np.iscomplexobj(sp):
-                sp_averaged = (np.median(np.real(sp), axis=0) + 1j * np.median(np.imag(sp), axis=0))
-            else:
-                sp_averaged = np.median(sp, axis=0)
-        elif average == 'mean':
-            sp_averaged = sp.mean(axis=0)
+    if average == 'rms':
+        sp_averaged = np.sqrt(np.mean(np.power(np.abs(sp),2), axis=0))
+    elif average == 'median':
+        # np.median must be passed real arrays for the desired result
+        if np.iscomplexobj(sp):
+            sp_averaged = (np.median(np.real(sp), axis=0) + 1j * np.median(np.imag(sp), axis=0))
         else:
-            raise ValueError('choose from specified methods')
-        sp_averaged = pd.DataFrame(data=sp_averaged, columns=df.columns[:cols])
+            sp_averaged = np.median(sp, axis=0)
+    elif average == 'mean':
+        sp_averaged = sp.mean(axis=0)
+    else:
+        raise ValueError('choose from specified methods')
+    sp_averaged = pd.DataFrame(data=sp_averaged, columns=df.columns[:cols])
+    if domain == 'frequency':
         sp_averaged['Frequency (Hz)'] = freq
         sp_averaged.set_index('Frequency (Hz)', inplace=True)
-    if domain == 'order':
-        sp_dict = {}
-        for i in range(len(rps)):
-            keys = freq/rps[i]
-            for j in range(len(keys)):
-                if keys[j] in sp_dict:
-                    sp_dict[keys[j]] = np.vstack([sp_dict[keys[j]],sp[i,j,:]])
-                else:
-                    sp_dict.update({keys[j]: np.array(sp[i,j,:])})
-        print('There are %d order number as indexing'%len(sp_dict.keys()))
-        # getting average
-        sp_averaged = pd.DataFrame(columns=df.columns[:cols])
-        for freq_order in sp_dict.keys():
-            if average == 'rms':
-                sp_order = np.sqrt(np.mean(np.power(np.abs(sp_dict[freq_order]),2), axis=0))
-            elif average == 'median':
-                if np.iscomplex(sp_dict[freq_order].all()):
-                    sp_order = (np.median(np.real(sp_dict[freq_order]), axis=0) + 1j * np.median(np.imag(sp_dict[freq_order]), axis=0))
-                else:
-                    sp_order = np.median(sp_dict[freq_order], axis = 0)
-            elif average == 'mean':
-                sp_order = sp_dict[freq_order].mean(axis=0)
-            else:
-                raise ValueError('choose from specified methods')
+    elif domain == 'order':
+        sp_averaged['order (cycle)'] = freq
+        sp_averaged.set_index('order (cycle)', inplace=True)
             
-            sp_averaged.loc[freq_order] = sp_order
-        sp_averaged.sort_index(inplace=True)
-        sp_averaged.index.rename('order of rotating frequency', inplace=True)
-        
     return sp_averaged
 
 def annotatePeaks(x: Any, y: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None, dot = None, 
@@ -1074,22 +1050,17 @@ def fft_frame_to_excel(fft_frame:np.ndarray, sheet_names:list, fft_filename:str,
             writer.book.save(fft_filename)
             writer.book.close()
 
-def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b01011):
+def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b00010):
     np.random.seed(0)
     fs = 51200
     frame_len = 8192
-    n = 8192*5
-    t = np.arange(n)/fs
-    # to be the factor of fs for simplicity
-    f1 = 40
-    f2 = 50
-    
+    #f1 = 40
+    #f2 = 50
     #x = pd.DataFrame(10 * np.sin(2 * np.pi * f1 * t) + 10 * np.sin(2 * np.pi * 2 * f1 * t) + 10 * np.sin(2 * np.pi * 3 * f1 * t) + 0.5 * np.random.randn(n), columns=['x'])
     #y = pd.DataFrame(15 * np.sin(2 * np.pi * f2 * t + np.pi / 4) + 10 * np.sin(2 * np.pi * 2 * f2 * t) + 10 * np.sin(2 * np.pi * 3 * f2 * t) + 0.5 * np.random.randn(n), columns=['y'])
-    x = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D", nrows=n)
-    y = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000785_lr.xlsx', header=0, usecols="A:D", nrows=n)
+    x = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D")
+    y = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000785_lr.xlsx', header=0, usecols="A:D")
     
-    nframe = int(n / (frame_len/4) - (4 - 1))
     # visualize
     mask = plot_mask
     count = 0
@@ -1098,10 +1069,11 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b01011
         mask = mask >> 1
     fig, axs = plt.subplots(count, 1, layout='constrained')    
     idx = 0
+    axs = [axs] if (count == 1) else axs # change the axs into list
     if plot_mask & 0b00001:
         # input
-        axs[idx].plot(t, x, label='%.2f Hz base freq'%f1)
-        axs[idx].plot(t, y, label='%.2f Hz base freq'%f2)
+        axs[idx].plot(np.arange(x.shape[0])/fs, x, label=x.columns)
+        axs[idx].plot(np.arange(y.shape[0])/fs, y, label=y.columns)
         axs[idx].set_xlabel('time(s)')
         axs[idx].set_ylabel('input signal')
         axs[idx].set_xlim(0, 0.25)
@@ -1109,48 +1081,48 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b01011
         idx += 1
     if plot_mask & 0b00010:
         # fft
-        freq_x, fft_x, rps_x = fft(df=signal.detrend(x, axis=0, type='constant'), fs=fs, nperseq=frame_len, window=np.hanning(frame_len), noverlap=0.75*frame_len, rps=[43.75 for i in range(nframe)])
-        freq_y, fft_y, rps_y = fft(df=signal.detrend(y, axis=0, type='constant'), fs=fs, nperseq=frame_len, window=np.hanning(frame_len), noverlap=0.75*frame_len, rps=[43.75 for i in range(nframe)])
-        axs[idx].plot(freq_x, np.abs(fft_x[0, :, :]), label='%.2f'%f1)
-        axs[idx].plot(freq_y, np.abs(fft_y[0, :, :]), label='%.2f'%f2)
+        fft_x = get_fft(df=x, fs=fs, frame_len=frame_len, noverlap=0.75*frame_len)
+        fft_y = get_fft(df=y, fs=fs, frame_len=frame_len, noverlap=0.75*frame_len)
+        axs[idx].plot(fft_x.index, fft_x, label=x.columns)
+        axs[idx].plot(fft_y.index, fft_y, label=y.columns)
         axs[idx].legend()
-        axs[idx].set_xlim(0, 500)
+        axs[idx].set_xlim(0, 5000)
         axs[idx].set_yscale('log')
         axs[idx].set_title('input signal fft spectrum at first frame')
         axs[idx].set_xlabel('frequency (Hz)')
-        annotatePeaks(x=freq_x, y=np.abs(fft_x[0, :, 0]), ax= axs[idx], prominence=np.abs(fft_x[0, :, 0])*0.9, rotation = 0, 
-                      annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
-        annotatePeaks(x=freq_y, y=np.abs(fft_y[0, :, 0]), ax= axs[idx], prominence=np.abs(fft_y[0, :, 0])*0.9, rotation = 0,
-                      annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
+        annotatePeaks(x=fft_x.index.to_numpy(), y=fft_x.iloc[:,0].to_numpy(), ax= axs[idx], prominence=fft_x.iloc[:, 0].to_numpy()*0.9,
+                      rotation = 0, dot = 'x', xytext=(0, 0), arrowprops=None)
+        annotatePeaks(x=fft_y.index.to_numpy(), y=fft_y.iloc[:,0].to_numpy(), ax= axs[idx], prominence=fft_y.iloc[:, 0].to_numpy()*0.9,
+                      rotation = 0, dot = 'x', xytext=(0, 0), arrowprops=None)
         idx += 1
     if plot_mask & 0b00100:
         # csd
-        freq_csd2, Pxy2 = signal.csd(x.to_numpy().reshape(frame_len), y.to_numpy().reshape(frame_len), fs, nperseg=frame_len, noverlap=frame_len*0.75, average=average)
-        axs[idx].plot(freq_csd2, np.abs(Pxy2))
+        freq_csd2, Pxy2 = signal.csd(x, y, fs, nperseg=frame_len, noverlap=frame_len*0.75, axis=0, average=average)
+        axs[idx].plot(freq_csd2, np.abs(Pxy2[:, :3]), label = ['%s vs %s'%(x.columns[i], y.columns[i]) for i in range(3)])
         axs[idx].set_xlim(0, 500)
         axs[idx].set_yscale('log')
         axs[idx].set_xlabel('frequency (Hz)')
         axs[idx].set_ylabel('CSD [V**2/Hz]')
-        annotatePeaks(x=freq_csd2, y=np.abs(Pxy2), ax= axs[idx], prominence=np.abs(Pxy2)*0.9, rotation = 0,
+        axs[idx].legend()
+        annotatePeaks(x=freq_csd2, y=np.abs(Pxy2[:, 0]), ax= axs[idx], prominence=np.abs(Pxy2[:,0])*0.9, rotation = 0,
                       annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
         idx += 1
     if plot_mask & 0b01000:
         # csd_order
-        freq_csd, Pxy = csd_order(x=x, y=y, fs=fs, nperseg=1024, noverlap=frame_len*0.75, cols=3,
-                              rps_x=[43.75 for i in range(nframe)], rps_y=[43.75 for i in range(nframe)], average=average)
-        axs[idx].plot(freq_csd, np.abs(Pxy))
-        #axs[idx].set_xlim(0, 12)
+        freq_csd, Pxy = csd_order(x=x, y=y, fs=1024, nperseg=1024, noverlap=10, cols=3)
+        axs[idx].plot(freq_csd, np.abs(Pxy), label = ['%s vs %s'%(x.columns[i], y.columns[i]) for i in range(3)])
+        axs[idx].set_xlim(0, Pxy.shape[0])
         axs[idx].set_yscale('log')
         axs[idx].set_xlabel('order')
         axs[idx].set_ylabel('CSD [V**2/Hz]')
+        axs[idx].legend()
         annotatePeaks(x=freq_csd, y=np.abs(Pxy[:,0]), ax= axs[idx], prominence=np.abs(Pxy[:,0])*0.9, rotation = 0,
                       annotateY=True, dot = 'x', xytext=(0, 0), arrowprops=None)
         idx += 1
     if plot_mask & 0b10000:
         # coherence
-        Cxy = coherence(x=x, y=y, fs=fs, nperseg=frame_len, noverlap=frame_len*0.75, cols=1, domain = 'order', 
-                        rps_x=[43.75 for i in range(nframe)], rps_y=[43.75 for i in range(nframe)], average=average)
-        Cxy.plot(ax=axs[idx], logy=True, xlabel='order', ylabel='Coherence', xlim=(0,12))
+        Cxy = coherence(x=x, y=y, fs=1024, nperseg=1024, noverlap=10, cols=3, domain = 'order', average=average)
+        Cxy.plot(ax=axs[idx], logy=True, xlabel='order', ylabel='Coherence', xlim=(0, Cxy.shape[0]))
     plt.show()
 
 def time_dependent_coherence(x: pd.Series, y:pd.Series):
@@ -1169,10 +1141,7 @@ def time_dependent_coherence(x: pd.Series, y:pd.Series):
     plot.show()
 
 if __name__ == '__main__':
-    #coherence_test(average='median')
-    normal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx', header=0, usecols="A:D")
-    abnormal_df = pd.read_excel('../../test_data//Defective_products_on_line_20%//acc_data//001833_lr.xlsx', header=0, usecols="A:D")
-    coherence(x=normal_df, y=abnormal_df, fs=1024, nperseg=1024, noverlap=10, cols=3, nfft=1024, domain='order', average='mean', visualize=True)
+    coherence_test(average='median')
     #normal_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3], combine=True)
     #abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3], combine=True)
     #df_fft = pd.concat([normal_fft_df, abnormal_fft_df], axis=1)
