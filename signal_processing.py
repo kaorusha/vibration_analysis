@@ -1,5 +1,3 @@
-import collections
-import copy
 from typing import Any, List
 from typing import Literal
 import librosa
@@ -12,7 +10,6 @@ import matplotlib.pyplot as plt
 import scipy.spatial
 import memd.MEMD_all
 import os
-from gwpy.timeseries import TimeSeries
 
 color = {
     'blue': (0, 0.4470, 0.7410),
@@ -282,12 +279,18 @@ def stat_calc(df: pd.DataFrame):
     df_stats.index.name = 'Data Set'
     return df_stats
 
-def get_psd(df: pd.DataFrame, frame_len=8192, fs = 48000, overlap = 0.75):
+def get_psd(df: pd.DataFrame, cut_off_freq: float = 0.0, fs: int = 1, nperseg: int = 8192, noverlap: int = 8192 * 0.75, 
+            domain:Literal['frequency', 'order'] = 'frequency', nfft: int = None, cols: int = 3, average:Literal['mean', 'median'] = 'mean',
+            **arg):
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
-    filtered_df = butter_highpass(detrend_df, df.index, 60, fs, 2)
-    f, psd = signal.welch(filtered_df, fs=fs, nperseg=frame_len, window='hann', noverlap=frame_len*overlap, axis=0)
-    df_psd = pd.DataFrame(psd,columns=df.columns)
-    df_psd.columns
+    if cut_off_freq > 0:
+        detrend_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2)
+    if domain == 'frequency':
+        f, psd = signal.welch(detrend_df, fs=fs, nperseg=nperseg, window='hann', noverlap=noverlap, axis=0)
+    elif domain == 'order':
+        f, psd = csd_order(x=detrend_df, y=detrend_df, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average, **arg)
+        psd = np.real(psd)
+    df_psd = pd.DataFrame(psd,columns=df.columns[:cols])
     df_psd['Frequency (Hz)'] = f
     df_psd = df_psd.set_index('Frequency (Hz)')
     return df_psd
@@ -314,59 +317,118 @@ def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:t
         os.makedirs(path_dir)
     fig.savefig(path_dir+file_name, transparent=False, dpi=80, bbox_inches="tight")
 
-def acc_processing(hdf_level_time_filename:str,
-                   rename_column_method = None,
-                   usecols:list = None,
-                   cols:int = 3,
-                   sheets:list = None,
-                   state: bool = False, state_result_filename:str = 'state.xlsx', 
-                   fft: bool = False, fft_result_filename:str = 'fft.xlsx',
-                   cut_off_freq: float = 60,
-                   psd: bool = False, psd_result_filename:str = 'psd.xlsx'):
+def to_excel(df:pd.DataFrame, sheet_name:str, filename:str):
+    '''
+    use pandas to_excel(), if the file does not exist, an excel file with one default sheet is created.
+    after saving, remove the first default blank sheet.
+    ''' 
+    # if file not exist
+    if not os.path.exists(filename):
+        wb = openpyxl.Workbook()
+        wb.save(filename)
+        wb.close()
+    with pd.ExcelWriter(filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name)
+        if 'Sheet' in writer.book.sheetnames:    
+            writer.book.remove(writer.book['Sheet'])
+        writer.book.save(filename)
+        writer.book.close()
+
+def acc_processing_df(
+        df: pd.DataFrame,
+        analysis_mask: int,
+        sheet_name: str,
+        df_stats: pd.DataFrame, 
+        coherence_compare_df: pd.DataFrame = None,
+        fft_result_filename:str = 'fft.xlsx',
+        psd_result_filename:str = 'psd.xlsx',
+        Cxy_result_filename:str = 'coherence.xlsx',
+        **arg
+        ):
+    '''
+    given an input as dataframe type of level vs time data, specificly accelerometer cencor data, do the selected analysis
+    and output to specified xlsx file, each output is saved in one sheet of a workbook.
+
+    Parameters
+    ----------
+    domain : all analysis use the same domain 
+    '''
+    if analysis_mask & 0b0001:
+        # state
+        df_stats = pd.concat(df_stats, stat_calc(df))
+    if analysis_mask & 0b0010:
+        # fft
+        df_fft = get_fft(df, **arg)
+        to_excel(df_fft, sheet_name, fft_result_filename)
+    if analysis_mask & 0b0100:
+        # psd
+        df_psd = get_psd(df, **arg)
+        to_excel(df_psd, sheet_name, psd_result_filename)
+    if analysis_mask & 0b1000:
+        # coherence
+        df_Cxy = coherence(x=coherence_compare_df, y=df, **arg)    
+        to_excel(df_Cxy, sheet_name, Cxy_result_filename)
+        
+def acc_processing_hdf(
+        hdf_level_time_filename:str,
+        analysis_mask: int, 
+        comparing_sample_lr: str = '',
+        comparing_sample_ud: str = '',
+        state_result_filename:str = 'state.xlsx',
+        fft_result_filename:str = 'fft.xlsx',
+        psd_result_filename:str = 'psd.xlsx',
+        Cxy_result_filename:str = 'coherence.xlsx',
+        rename_column_method = None,
+        usecols:list = None,
+        sheets:list = None,
+        **arg):
     """
-    read level vs time acoustic .hdf file, loop for each sheet, read as panda data frame and do selected processing, 
-    save the result of from multiple sheet of raw acc data into one result excel sheet.
+    read level vs time acoustic .excel file, loop for each sheet or each file in the directory as panda data frame 
+    and do selected processing, save the result into excel workbook.
     
     Parameters
-    ------
-    state : whether use the data frame to calculate time domain standard deviation etc..
-    fft : whether to calculate fast fourier transform
-    psd : whether to calculate power spectral density
+    ----------
+    hdf_level_time_filename : head acoustic exported excel file
+    analysis_mask : whether use the data frame to calculate 
+        * time domain standard deviation etc..
+        * fft
+        * psd
+        * coherence
+    
+    comparing_sample_lr : str,
+        comparing file for coherence analysis, when the sensors are attached at left, right, and axial side of the sample.
+    comparing_sample_ud : str,
+        comparing file for coherence analysis, when the sensors are attached at up, down, and axial side of the sample.
     """
+    if analysis_mask & 0b0001:
+        df_stats = pd.DataFrame()
+    
+    if analysis_mask & 0b1000:
+        comparing_sample_lr_df = pd.read_excel(hdf_level_time_filename, header=0, index_col=0, skiprows=13, usecols=usecols, sheet_name=comparing_sample_lr)
+        comparing_sample_ud_df = pd.read_excel(hdf_level_time_filename, header=0, index_col=0, skiprows=13, usecols=usecols, sheet_name=comparing_sample_ud)
+    else:
+        comparing_sample_lr_df = pd.DataFrame()
+        comparing_sample_ud_df = pd.DataFrame()
+        
     workbook = openpyxl.load_workbook(hdf_level_time_filename, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + hdf_level_time_filename + " )")
-    if state:
-        df_all_stats = pd.DataFrame()
-    if fft:
-        df_all_fft = pd.DataFrame()
-    if psd:
-        df_all_psd = pd.DataFrame()
-    if sheets == None:
-        sheets = workbook.sheetnames
+    
+    sheets = workbook.sheetnames if sheets == None else sheets
     for sheet in sheets:
         title = workbook[sheet]["B5"].value
         df = pd.read_excel(hdf_level_time_filename, sheet_name=sheet, header=0, index_col=0, skiprows=13, usecols=usecols)
         # rewrite column title adding title
         if rename_column_method is not None:
             rename_column_method(df, title)
-        if state:
-            df_stats = stat_calc(df)
-            df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-        if fft:
-            df_fft = get_fft(df, cut_off_freq=cut_off_freq, cols=cols)
-            #plot = df_fft.plot(title="FFT "+title, xlabel="Frequency (Hz)", ylabel="Amplitude", logy=True, xlim=(0,5000))        
-            df_all_fft = pd.concat([df_all_fft, df_fft], axis=1)
-        if psd:
-            df_psd = get_psd(df)
-            # df_psd.plot(title="PSD: power spectral density", xlabel="Frequency (Hz)", ylabel="Acceleration (g^2/Hz)", logy=True)
-            df_all_psd = pd.concat([df_all_psd, df_psd], axis=1)
+        acc_processing_df(df = df, analysis_mask=analysis_mask, sheet_name=title,
+                          df_stats=df_stats if analysis_mask & 0b0001 else None, 
+                          coherence_compare_df=comparing_sample_lr_df if 'lr' in title else comparing_sample_ud_df,
+                          fft_result_filename=fft_result_filename, psd_result_filename=psd_result_filename,
+                          Cxy_result_filename=Cxy_result_filename, **arg)
+
     workbook.close()
-    if state:
-        df_all_stats.to_excel(state_result_filename, sheet_name='state')
-    if fft:
-        df_all_fft.to_excel(fft_result_filename, sheet_name='fft')
-    if psd:
-        df_all_psd.to_excel(psd_result_filename, sheet_name='psd')
+    if analysis_mask & 0b0001:
+        df_stats.to_excel(state_result_filename, sheet_name='state')
 
 def compare_peak_from_fftdataframe(df: pd.DataFrame):
     peak_dict = {}
@@ -423,9 +485,17 @@ def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
 
     return df_fft.iloc[idx_list].mean()
 
-def acc_processing_ver2(dir:str, 
-                        state: bool = False, state_result_filename:str = 'state.xlsx', cols = None,
-                        fft: bool = False, fft_result_filename:str = 'fft.xlsx', domain: Literal["frequency", "order"] = "frequency"):
+def acc_processing_excel(
+        dir:str,
+        analysis_mask: int,
+        comparing_sample_lr: str = '',
+        comparing_sample_ud: str = '',
+        state_result_filename:str = 'state.xlsx',
+        fft_result_filename:str = 'fft.xlsx',
+        psd_result_filename:str = 'psd.xlsx',
+        Cxy_result_filename:str = 'coherence.xlsx',
+        usecols:list = None,
+        **arg):
     """
     read level vs time .xlsx file, loop for each file in the directory, read as panda data frame and do selected processing, 
     save the result of from multiple file of raw acc data into seperate excel sheet. Because order is representes as number
@@ -434,43 +504,44 @@ def acc_processing_ver2(dir:str,
     
     Parameters
     ----------
-    state : whether use the data frame to calculate time domain standard deviation etc..
-    fft : whether to calculate fast fourier transform
-    domain : units of the spectrum x labels
-        * 'frequency': hz
-        * 'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
-            versus the multiples of the inner race rotation cycle, fr. 
+    dir : directory where acc files are
+    analysis_mask : whether use the data frame to calculate 
+        * time domain standard deviation etc..
+        * fft
+        * psd
+        * coherence
     
+    comparing_sample_lr : str,
+        comparing acc file for coherence analysis, when the sensors are attached at left, right, and axial side of the sample.
+    comparing_sample_ud : str,
+        comparing acc file for coherence analysis, when the sensors are attached at up, down, and axial side of the sample. 
+    
+    Examples
+    --------
+    >>>    acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b1000, fs=1024, nperseg=int(51200/44), noverlap=10,
+                         domain='order', nfft=1024, cols=3, 
+                         comparing_sample_lr='../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx',
+                         comparing_sample_ud='../../test_data//Defective_products_on_line_20%//acc_data//000045_ud.xlsx'
+                         )
     """
-    if state:
-        df_all_stats = pd.DataFrame()
-    if fft:
-        # an excel file with one default sheet is created
-        wb = openpyxl.Workbook()
-        wb.save(fft_result_filename)
-        wb.close()
+    if analysis_mask & 0b0001:
+        df_stats = pd.DataFrame()
+    
+    comparing_sample_lr_df = pd.read_excel(comparing_sample_lr, header=0, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
+    comparing_sample_ud_df = pd.read_excel(comparing_sample_ud, header=0, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
 
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx'):
-            df = pd.read_excel(dir+file_name, header=0)
+            df = pd.read_excel(dir+file_name, header=0, usecols=usecols)
             print("read excel %s"%file_name)
-            #df.rename(columns=lambda x: file_name[0:9] + '_' + x, inplace=True)
-            if state:
-                df_stats = stat_calc(df)
-                df_all_stats = pd.concat([df_all_stats, df_stats], axis=0)
-            if fft:
-                df_fft = get_fft(df, fs=51200, domain=domain, cols=cols)
-                with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-                    df_fft.to_excel(writer, sheet_name=file_name[:-5])
-
-    if state:
-        df_all_stats.to_excel(state_result_filename, sheet_name='state')
-    if fft:
-        # remove the first default blank sheet
-        with pd.ExcelWriter(fft_result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-            writer.book.remove(writer.book['Sheet'])
-            writer.book.save(fft_result_filename)
-            writer.book.close()
+            acc_processing_df(df = df, analysis_mask=analysis_mask, sheet_name=file_name[:-5],
+                              df_stats=df_stats if analysis_mask & 0b0001 else None, 
+                              coherence_compare_df=comparing_sample_lr_df if 'lr' in file_name else comparing_sample_ud_df,
+                              fft_result_filename=fft_result_filename, psd_result_filename=psd_result_filename,
+                              Cxy_result_filename=Cxy_result_filename, **arg)
+    
+    if analysis_mask & 0b0001:
+        df_stats.to_excel(state_result_filename, sheet_name='state')
 
 def savefftplot(df_fft:pd.DataFrame, sample:list, annotate_peaks:bool, annotate_bends:bool, save_fig:bool, save_dir:str):
     '''
@@ -745,7 +816,7 @@ def slice_frame(input:pd.DataFrame, fg_column:int, threshold:float, pulse_per_ro
                 cycle_frame = np.concatenate((cycle_frame, resampled_cycle), axis=0)
     # time synchronous average for every NumRotations frame
     for i in range(cycle_frame.shape[0] - NumRotations):
-        cycle_frame[i, :, :3] = np.mean(cycle_frame[i:i+NumRotations, :, :cols], axis=0)
+        cycle_frame[i, :, :cols] = np.mean(cycle_frame[i:i+NumRotations, :, :cols], axis=0)
     
     return cycle_frame[:-NumRotations, :, :cols]
 
@@ -818,17 +889,7 @@ def level_and_rpm_seperate_processing(hdf_level_time_filename:str, level_sheet:s
         rps.append(np.round(np.mean(frame, axis=0)/60))
     df_fft = get_fft(df, cut_off_freq = 10, fs = fs, frame_len=nperseq, overlap = overlap,
                      domain="order", pulse_per_round = 2, rps = rps, cols = 1)
-    # if file not exist
-    if not os.path.exists(fft_filename):
-        wb = openpyxl.Workbook()
-        wb.save(fft_filename)
-        wb.close()
-    with pd.ExcelWriter(fft_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-        df_fft.to_excel(writer, sheet_name=fft_sheet)
-        if 'Sheet' in writer.book.sheetnames:
-            writer.book.remove(writer.book['Sheet'])
-        writer.book.save(fft_filename)
-        writer.book.close()
+    to_excel(df_fft, fft_sheet, fft_filename)
     
 def compare_rps_of_rpm_vs_time_file(dir):
     df_dict = {}
@@ -846,63 +907,13 @@ def compare_rps_of_rpm_vs_time_file(dir):
             df_dict[key] = df
     return df_dict
 
-def acc_processing_coherence(comparing_sample_dir:str, comparing_sample_num:str, dir: str, result_filename:str,
-                             fs:int, nperseg:int, noverlap:int, cols:int, nfft:int, domain:Literal['frequency','order'],
-                             average:Literal['mean', 'median'], visualize:bool = False):
-    '''
-    comparing all acc data in specified directory with the target acc data, and write eash result into different excel sheets.
-    
-    Parameters
-    ----------
-    comparing_sample_dir : the directory where the target comparing sample is
-    comparing_sample_num : the sample number that comparing with all other samples
-    dir : the directory with all samples that will be comparing with the comparing sample
-    result_filename : outputting excel, must add '.xlsx'
-    fs : sampling frequency
-    nperseg : number of samples of each window frame. In the order domain, this is estimated by fs/average_rotating_frequency.
-    noverlap : overlapping samples. In the order domain, this is used for time synchronized average for every noverlap cycles.
-    cols : use first int(cols) for fft analysis, this values usually equal to the number of accelerometers.
-    nfft : int, optional
-        Length of the FFT used, if a zero padded FFT is desired. If
-        `None`, the FFT length is `nperseg`. Defaults to `None`.
-        controlled the frequency resolution of the spectrum, using zero-padding to increase the resolution as nfft/nperseg
-    domain : units of the spectrum x labels
-        * 'frequency': hz
-        * 'order': transfer the angular rotation to order. The horizontal coordinate of the output spectrum is the amplitude 
-                   versus the multiples of the inner race rotation cycle, fr. 
-    average: { ‘mean’, ‘median’ },
-                    Method to use when averaging periodograms. If the spectrum is complex, the average is computed separately for the real and imaginary parts. Defaults to ‘mean’.
-    visualize : Set True to show the coherence graph
-    '''
-    wb = openpyxl.Workbook()
-    wb.save(result_filename)
-    wb.close()
-    df_x_lr = pd.read_excel(comparing_sample_dir + comparing_sample_num + '_lr.xlsx', header = 0)
-    df_x_ud = pd.read_excel(comparing_sample_dir + comparing_sample_num + '_ud.xlsx', header = 0)
-    
-    for file_name in os.listdir(dir):
-        if file_name.endswith('.xlsx'):
-            print("read excel %s"%file_name)
-            df_y = pd.read_excel(dir + file_name, header = 0)
-            Cxy = coherence(x=df_x_lr if 'lr' in file_name else df_x_ud, y=df_y, fs=fs, nperseg=nperseg, noverlap=noverlap, 
-                            cols=cols, domain=domain, nfft=nfft, average=average, visualize=visualize)
-            
-            with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-                Cxy.to_excel(writer, sheet_name=file_name[:-5])
-    # remove the first default blank sheet
-    with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-        writer.book.remove(writer.book['Sheet'])
-        writer.book.save(result_filename)
-        writer.book.close()
-
-def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int, cols:int, nfft = None, average:Literal['mean', 'median'] = 'mean'):
+def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:int, nfft = None, average:Literal['mean', 'median'] = 'mean', **arg):
     '''
     the time domain is transfered to order domain, every data sample in the input signal represnet the same increment of rotation angle,
     x and y input signal has the same sampling angle.
     
     Parameters
     ----------
-    fs : sampling frequency
     nperseg : number of samples of each window frame. In the order domain, this is estimated by fs/average_rotating_frequency.
     noverlap : overlapping samples. In the order domain, this is used for time synchronized average for every noverlap cycles.
     nfft : int, optional
@@ -917,18 +928,19 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
 
     # detrend
     signal.detrend(x, axis=0, type='constant', overwrite_data=True) 
-    freq_order_x, fft_x = fft(df=x, fs = fs, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', cols=cols)
+    freq_order_x, fft_x = fft(df=x, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', cols=cols, **arg)
     if x.equals(y):
         fft_y = fft_x
     else:
         # detrend
         signal.detrend(y, axis=0, type='constant', overwrite_data=True) 
-        _, fft_y = fft(df=y, fs = fs, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', cols=cols)    
+        _, fft_y = fft(df=y, nperseg=nperseg, window = win, noverlap=noverlap, nfft=nfft, domain='order', cols=cols, **arg)    
 
     frame_len = min(fft_x.shape[0], fft_y.shape[0])
     Pxy = np.empty((frame_len, fft_x.shape[1], cols), dtype=np.complex128)
     
     # scaling for power spectral density
+    fs = nperseg if nfft == None else nfft
     scale = 1.0 / (fs * (win*win).sum())
     # input signal is real so the rfft amplitude *2, and if nperseq can not divided by 2, the last point is unpaired Nyquist freq point, don't double
     not_divided_by_2 = nperseg % 2
@@ -1026,19 +1038,9 @@ def coherence(x:pd.DataFrame, y:pd.DataFrame, fs:int, nperseg:int, noverlap:int,
     return Cxy
 
 def corr(df:pd.DataFrame, result_filename:str):
-    wb = openpyxl.Workbook()
-    wb.save(result_filename)
-    wb.close()
-    
     for meth in ['pearson', 'kendall', 'spearman']:
         df_corr = df.corr(method=meth)
-        with pd.ExcelWriter(result_filename, mode='a', engine='openpyxl') as writer:
-            df_corr.to_excel(writer, sheet_name=meth)
-    # remove the first default blank sheet
-    with pd.ExcelWriter(result_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-        writer.book.remove(writer.book['Sheet'])
-        writer.book.save(result_filename)
-        writer.book.close()
+        to_excel(df_corr, meth, result_filename)
 
 def fft_analysis(good_sample_fft: {pd.DataFrame}, benchmarks_sheet:str, abnormal_sample_fft: {pd.DataFrame}, types: list):
     '''
@@ -1100,21 +1102,14 @@ def fft_frame_to_excel(fft_frame:np.ndarray, sheet_names:list, fft_filename:str,
     '''
     output a not averaged fft frames into excel, the shape of input frames should be [windowed_frame, frequency, column]
     the column >= 1 represnets the input channels
+
+    Parameters
+    ----------
+    sheet_names : if the fft_frame has multiple channels, save each channels in seperate sheet
     '''
-    # if file not exist
-    if not os.path.exists(fft_filename):
-        wb = openpyxl.Workbook()
-        wb.save(fft_filename)
-        wb.close()
-    
     for sheet in range(len(sheet_names)):
         df_fft = pd.DataFrame(fft_frame[:,:,sheet].transpose(), index=index, columns=range(fft_frame.shape[0]))
-        with pd.ExcelWriter(fft_filename, mode="a", if_sheet_exists="new", engine="openpyxl") as writer:
-            df_fft.to_excel(writer, sheet_name=sheet_names[sheet])
-            if 'Sheet' in writer.book.sheetnames:
-                writer.book.remove(writer.book['Sheet'])
-            writer.book.save(fft_filename)
-            writer.book.close()
+        to_excel(df=df_fft, sheet_name=sheet_names[sheet], filename=fft_filename)
 
 def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b10000):
     np.random.seed(0)
@@ -1191,27 +1186,9 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b10000
         Cxy.plot(ax=axs[idx], logy=True, xlabel='order', ylabel='Coherence', xlim=(0, Cxy.shape[0]))
     plt.show()
 
-def time_dependent_coherence(x: pd.Series, y:pd.Series):
-    s1 = TimeSeries(x, sample_rate=51200)
-    s2 = TimeSeries(y, sample_rate=51200)
-    coh = s1.coherence_spectrogram(s2, stride=0.5, fftlength=0.5, overlap=0.25)
-    df = pd.DataFrame(data=coh.zip())
-    df.to_excel('spectrogram.xlsx')
-    #coh = s1.coherence(s2, fftlength=8192/51200, overlap=8192*0.75/51200, window='flattop')
-    plot = coh.plot(xlabel='Frequency [Hz]', #xscale='log',
-                    ylabel='Coherence', #yscale='linear',
-                    title='Coherence between acc data of %s and %s'%(x.name, y.name))
-    ax = plot.gca()
-    ax.grid(True, 'both', 'both')
-    ax.colorbar(label='Coherence', clim=[0,2], cmap='plasma')
-    plot.show()
-
 if __name__ == '__main__':
-    acc_processing_coherence(comparing_sample_dir='../../test_data//Defective_products_on_line_20%//acc_data//', 
-                             comparing_sample_num='000045',
-                             dir='../../test_data//20240911_good_samples//acc_data//',
-                             result_filename='coherence.xlsx',
-                             fs=51200, nperseg=1163, noverlap=10, cols=3, nfft=1024, domain='order', average='mean', visualize=True)
+    acc_processing_excel(dir='../../test_data//Defective_products_on_line_20%//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+                         domain='order', nfft=1024, cols=3)
     #normal_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3], combine=True)
     #abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3], combine=True)
     #df_fft = pd.concat([normal_fft_df, abnormal_fft_df], axis=1)
