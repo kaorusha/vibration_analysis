@@ -450,17 +450,17 @@ def rename_col(df: pd.DataFrame, title:str):
     # rewrite column title adding title
     df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
 
-def fft_processing(fft_filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True):
+def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True):
     """
-    read previous exported FFT excel file, loop for each sheet, combine as one pandas data frame, or return a dictionary of dataframe
+    read previous exported excel file, loop for each sheet, combine as one pandas data frame, or return a dictionary of dataframe
     """
-    workbook = openpyxl.load_workbook(fft_filename, read_only=True, data_only=True, keep_links=False)
-    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + fft_filename + " )")
+    workbook = openpyxl.load_workbook(filename, read_only=True, data_only=True, keep_links=False)
+    print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + filename + " )")
 
     if file_type == 'normal':
-        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=0, index_col=0, usecols=usecols)
+        df_dict = pd.read_excel(filename, sheet_name=None, header=0, index_col=0, usecols=usecols)
     if file_type == 'hdf':
-        df_dict = pd.read_excel(fft_filename, sheet_name=None, header=0, index_col=0, skiprows=13, usecols=usecols)
+        df_dict = pd.read_excel(filename, sheet_name=None, header=0, index_col=0, skiprows=13, usecols=usecols)
         for sheet in workbook.sheetnames:
             title = workbook[sheet]["B5"].value
             rename_column_method(df_dict[sheet], title)
@@ -1186,13 +1186,58 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b10000
         Cxy.plot(ax=axs[idx], logy=True, xlabel='order', ylabel='Coherence', xlim=(0, Cxy.shape[0]))
     plt.show()
 
+def compare_spectrum_plot(file_name:str):
+    '''
+    read exported excel file of spectrum, plot with seperated sensor channel, and the color distinguished with abnormal type
+
+    Example
+    -------
+    >>> compare_spectrum_plot('coherence.xlsx')
+    '''
+    df = read_sheets(file_name, usecols=[0,1,2,3], combine=True)
+    # difine sample classification
+    normal = ['000022','000027','000030','000037','000039','000045','000048','000050','000051','000052','000053']
+    bearing_noise = ['003720','003735','003861','004072','004073','004802']
+    unknown_noise = ['000785','001833','002577','004124']
+    #all_samples = normal + bearing_noise + unknown_noise
+    fig, axs = plt.subplots(2,3, sharex='col', layout='constrained')
+    titles = [['left', 'right', 'lr_axial'],['up', 'down', 'ud_axial']]
+    def select_color(sample_num):
+        if sample_num in normal:
+            return color['green']
+        elif sample_num in bearing_noise:
+            return color['orange']
+        elif sample_num in unknown_noise:
+            return color['blue']
+        else:
+            return 'undefined sample number'
+
+    for i in range(len(titles)):
+        for j in range(len(titles[0])):
+            #axs[i, j].set_yscale('log')
+            axs[i, j].set_xlim(0, 150)
+            axs[i, j].set_title(titles[i][j])
+    
+    for j in range(len(df.columns)):
+        sample_num = df.columns[j].split(' ')[-1].split('_')[0]
+        select_color(sample_num)
+        if 'left' in df.columns[j]:
+            axs[0,0].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+        if 'right' in df.columns[j]:
+            axs[0,1].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+        if 'lr_axial' in df.columns[j]:
+            axs[0,2].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+        if 'up' in df.columns[j]:
+            axs[1,0].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+        if 'down' in df.columns[j]:
+            axs[1,1].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+        if 'ud_axial' in df.columns[j]:
+            axs[1,2].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+    plt.show()
+
 if __name__ == '__main__':
-    acc_processing_excel(dir='../../test_data//Defective_products_on_line_20%//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
-                         domain='order', nfft=1024, cols=3)
-    #normal_fft_df = fft_processing('../../test_data//20240911_good_samples//fft.xlsx', usecols=[0,1,2,3], combine=True)
-    #abnormal_fft_df = fft_processing('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', usecols=[0,1,2,3], combine=True)
-    #df_fft = pd.concat([normal_fft_df, abnormal_fft_df], axis=1)
-    #distvec = scipy.spatial.distance.pdist(df_fft.iloc[268:377,:].transpose(), metric='cosine') # most sensitive range 2000-5000hz
+    
+    #distvec = scipy.spatial.distance.pdist(df_psd.transpose(), metric='cosine')
     #m = scipy.spatial.distance.squareform(distvec)
     #matrix = pd.DataFrame(1-m, index=df_fft.columns, columns=df_fft.columns)
     #matrix.to_excel('cosine_similarity.xlsx')
