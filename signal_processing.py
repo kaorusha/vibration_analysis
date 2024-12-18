@@ -1235,9 +1235,11 @@ def compare_spectrum_plot(file_name:str):
             axs[1,2].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
     plt.show()
 
+def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
+    distvec = scipy.spatial.distance.pdist(df.transpose(), metric='cosine')
+    m = scipy.spatial.distance.squareform(distvec)
+    matrix = pd.DataFrame(1-m, index=df.columns, columns=df.columns)
+    to_excel(matrix, sheet_name, file_name)
+
 if __name__ == '__main__':
-    
-    #distvec = scipy.spatial.distance.pdist(df_psd.transpose(), metric='cosine')
-    #m = scipy.spatial.distance.squareform(distvec)
-    #matrix = pd.DataFrame(1-m, index=df_fft.columns, columns=df_fft.columns)
-    #matrix.to_excel('cosine_similarity.xlsx')
+    #df = read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True)
