@@ -1227,7 +1227,7 @@ def compare_spectrum_plot(file_name:str):
     
     for j in range(len(df.columns)):
         sample_num = df.columns[j].split(' ')[-1].split('_')[0]
-        select_color(sample_num)
+
         if 'left' in df.columns[j]:
             axs[0,0].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'right' in df.columns[j]:
@@ -1250,3 +1250,4 @@ def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
 
 if __name__ == '__main__':
     #compare_spectrum_plot('coherence_000052.xlsx')
+    pass
