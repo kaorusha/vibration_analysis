@@ -1186,6 +1186,25 @@ def coherence_test(average:Literal['mean', 'median'] = 'mean', plot_mask=0b10000
         Cxy.plot(ax=axs[idx], logy=True, xlabel='order', ylabel='Coherence', xlim=(0, Cxy.shape[0]))
     plt.show()
 
+def class_label(sample_num:str):
+    '''
+    return the classification type
+    * 0: normal
+    * 1: bearing_noise
+    * 2: unkwown_noise
+    '''
+    normal = ['000022','000027','000030','000037','000039','000045','000048','000050','000051','000052','000053']
+    bearing_noise = ['003720','003735','003861','004072','004073','004802']
+    unknown_noise = ['000785','001833','002577','004124']
+    if sample_num in normal:
+        return 0
+    elif sample_num in bearing_noise:
+        return 1
+    elif sample_num in unknown_noise:
+        return 2
+    else:
+        raise ValueError('undefined sample number')
+
 def compare_spectrum_plot(file_name:str):
     '''
     read exported excel file of spectrum, plot with seperated sensor channel, and the color distinguished with abnormal type
@@ -1196,21 +1215,9 @@ def compare_spectrum_plot(file_name:str):
     '''
     df = read_sheets(file_name, usecols=[0,1,2,3], combine=True)
     # difine sample classification
-    normal = ['000022','000027','000030','000037','000039','000045','000048','000050','000051','000052','000053']
-    bearing_noise = ['003720','003735','003861','004072','004073','004802']
-    unknown_noise = ['000785','001833','002577','004124']
-    #all_samples = normal + bearing_noise + unknown_noise
     fig, axs = plt.subplots(2,3, sharex='col', layout='constrained')
     titles = [['left', 'right', 'lr_axial'],['up', 'down', 'ud_axial']]
-    def select_color(sample_num):
-        if sample_num in normal:
-            return color['green']
-        elif sample_num in bearing_noise:
-            return color['orange']
-        elif sample_num in unknown_noise:
-            return color['blue']
-        else:
-            return 'undefined sample number'
+    colors = [color['green'], color['orange'], color['blue']]
 
     for i in range(len(titles)):
         for j in range(len(titles[0])):
@@ -1222,17 +1229,17 @@ def compare_spectrum_plot(file_name:str):
         sample_num = df.columns[j].split(' ')[-1].split('_')[0]
         select_color(sample_num)
         if 'left' in df.columns[j]:
-            axs[0,0].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[0,0].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'right' in df.columns[j]:
-            axs[0,1].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[0,1].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'lr_axial' in df.columns[j]:
-            axs[0,2].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[0,2].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'up' in df.columns[j]:
-            axs[1,0].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[1,0].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'down' in df.columns[j]:
-            axs[1,1].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[1,1].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
         if 'ud_axial' in df.columns[j]:
-            axs[1,2].plot(df.index, df.iloc[:,j], color=select_color(sample_num))
+            axs[1,2].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
     plt.show()
 
 def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
@@ -1242,4 +1249,4 @@ def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
     to_excel(matrix, sheet_name, file_name)
 
 if __name__ == '__main__':
-    #df = read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True)
+    #compare_spectrum_plot('coherence_000052.xlsx')
