@@ -1042,62 +1042,6 @@ def corr(df:pd.DataFrame, result_filename:str):
         df_corr = df.corr(method=meth)
         to_excel(df_corr, meth, result_filename)
 
-def fft_analysis(good_sample_fft: {pd.DataFrame}, benchmarks_sheet:str, abnormal_sample_fft: {pd.DataFrame}, types: list):
-    '''
-    if the amplitude of the index frequency of all abnormal samples is greater than all good samples, 
-    high light that frequency on the output spectrum plot.
-    '''
-    fig, axs = plt.subplots(len(types), 1, layout='constrained')
-    
-    bool_df = pd.DataFrame(columns=types)
-    for i in range(len(good_sample_fft[benchmarks_sheet].index) - 1):
-        # find the max of each type
-        maximum = [0 for _ in range(len(types))]
-        for sheet in good_sample_fft:
-            idx_lwr = binary_search(good_sample_fft[sheet].index, 0, len(good_sample_fft[sheet].index) - 1, 
-                                    good_sample_fft[benchmarks_sheet].index[i])
-            idx_upr = binary_search(good_sample_fft[sheet].index, 0, len(good_sample_fft[sheet].index) - 1,
-                                    good_sample_fft[benchmarks_sheet].index[i + 1])
-            if i > 20 and i < 30: 
-                print(idx_lwr, idx_upr)
-            for col in range(len(good_sample_fft[sheet].columns)):
-                for t in range(len(types)):
-                    if good_sample_fft[sheet].columns[col].endswith(types[t]):
-                        maximum[t] = max(np.max(good_sample_fft[sheet].iloc[idx_lwr:idx_upr, col]), maximum[t])
-                        break
-        # check each type is larger than the good samples or not
-    '''
-        bools = pd.DataFrame(data=[[True for i in types]], columns=types)
-
-        for sheet in abnormal_sample_fft:
-            idx = binary_search(abnormal_sample_fft[sheet].index, 0, len(abnormal_sample_fft[sheet].index) - 1, freq)
-            for col in range(len(abnormal_sample_fft[sheet].columns)):
-                for i in range(len(types)):
-                    if abnormal_sample_fft[sheet].columns[col].endswith(types[i]):
-                        bools.iloc[:, i] = ((abnormal_sample_fft[sheet].iloc[idx, col] > maximum[i]) & bools.iloc[:, i])
-                        break
-        bool_df = pd.concat([bool_df, bools], axis=0)
-    # high light the frequency
-    for i in range(len(types)):
-        axs[i].fill_between(good_sample_fft[benchmarks_sheet].index, 0, 1, where= bool_df.iloc[:,i], color= 'red', alpha=0.5, transform=axs[i].get_xaxis_transform())
-        axs[i].set_xlim(left=good_sample_fft[benchmarks_sheet].index[0], right=7600/44)
-        axs[i].set_yscale('log')
-        axs[i].set_ylabel(types[i])
-    
-    # add spectrum of good and bad samples
-    plot_df_each_col_a_fig(abnormal_sample_fft, types, axs, color='orange', linewidth=1, alpha=0.5)
-    plot_df_each_col_a_fig(good_sample_fft, types, axs, color='green', linewidth=1, alpha=0.5)
-    plt.show()
-    '''
-    
-def plot_df_each_col_a_fig(df_dict:{pd.DataFrame}, types: list, axs: np.ndarray, **arg):
-    for sheet in df_dict:
-        for col_name in df_dict[sheet].columns:
-            for i in range(len(types)):
-                if col_name.endswith(types[i]):
-                    axs[i].plot(df_dict[sheet].index, df_dict[sheet][col_name], **arg)
-                    break
-
 def fft_frame_to_excel(fft_frame:np.ndarray, sheet_names:list, fft_filename:str, index:np.ndarray):
     '''
     output a not averaged fft frames into excel, the shape of input frames should be [windowed_frame, frequency, column]
@@ -1205,41 +1149,75 @@ def class_label(sample_num:str):
     else:
         raise ValueError('undefined sample number')
 
-def compare_spectrum_plot(file_name:str):
+def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial'], **arg):
     '''
     read exported excel file of spectrum, plot with seperated sensor channel, and the color distinguished with abnormal type
+
+    Parameters
+    ----------
+    file_name : spectrum data.xlsx, can be fft, psd, coherence...
+    high_light: whether to high light the frequency where all normal samples are greater or lower than abnormal samples
+    titles: controls which sensor position data shows up
+    **arg: parameters pass to plot()
 
     Example
     -------
     >>> compare_spectrum_plot('coherence.xlsx')
+    >>> compare_spectrum_plot('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot('../../test_data//20240911_good_samples//fft.xlsx', high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot('psd.xlsx', high_light=True, linewidth=1, alpha=0.5)
+
     '''
     df = read_sheets(file_name, usecols=[0,1,2,3], combine=True)
     # difine sample classification
-    fig, axs = plt.subplots(2,3, sharex='col', layout='constrained')
-    titles = [['left', 'right', 'lr_axial'],['up', 'down', 'ud_axial']]
+    fig, axs = plt.subplots(len(titles),1, sharex='col', layout='constrained')
     colors = [color['green'], color['orange'], color['blue']]
 
     for i in range(len(titles)):
-        for j in range(len(titles[0])):
-            #axs[i, j].set_yscale('log')
-            axs[i, j].set_xlim(0, 150)
-            axs[i, j].set_title(titles[i][j])
+        if 'coherence' not in file_name:
+            axs[i].set_yscale('log')
+        axs[i].set_xlim(0, df.index[-1])
+        axs[i].set_title(titles[i])
     
     for j in range(len(df.columns)):
-        sample_num = df.columns[j].split(' ')[-1].split('_')[0]
+        label_sample = class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0])
+        for i in range(len(titles)):
+            if titles[i] in df.columns[j]:
+                axs[i].plot(df.index, df.iloc[:,j], color=colors[label_sample], **arg)
+                break
+    
+    if high_light:
+        normal_column = [[] for i in titles]
+        abnormal_column = [[] for i in titles]
+        
+        for j in range(len(df.columns)):
+            if class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0]) == 0:
+                for i in range(len(titles)):
+                    if titles[i] in df.columns[j]:
+                        normal_column[i].append(j)
+                        break
+            else:
+                for i in range(len(titles)):
+                    if titles[i] in df.columns[j]:
+                        abnormal_column[i].append(j)
+                        break
 
-        if 'left' in df.columns[j]:
-            axs[0,0].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
-        if 'right' in df.columns[j]:
-            axs[0,1].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
-        if 'lr_axial' in df.columns[j]:
-            axs[0,2].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
-        if 'up' in df.columns[j]:
-            axs[1,0].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
-        if 'down' in df.columns[j]:
-            axs[1,1].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
-        if 'ud_axial' in df.columns[j]:
-            axs[1,2].plot(df.index, df.iloc[:,j], color=colors[class_label(sample_num)])
+        bool_high_light = np.zeros((len(df.index), len(titles)), dtype=bool)
+        for idx in range(len(df.index)):
+            if 'coherence' in file_name:
+                for i in range(len(titles)):
+                    if max(df.iloc[idx, abnormal_column[i]]) < min(df.iloc[idx, normal_column[i]]):
+                        bool_high_light[idx, i] = True
+                        print('%s find at %f'%(titles[i],df.index[idx]))
+            else:
+                for i in range(len(titles)):
+                    if min(df.iloc[idx, abnormal_column[i]]) > max(df.iloc[idx, normal_column[i]]):
+                        bool_high_light[idx, i] = True
+                        print('%s find at %f'%(titles[i],df.index[idx]))
+             
+        for i in range(len(titles)):
+            axs[i].fill_between(df.index, 0, 1, where= bool_high_light[:,i], color= 'red', alpha=0.5, transform=axs[i].get_xaxis_transform())
+
     plt.show()
 
 def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
@@ -1249,5 +1227,4 @@ def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
     to_excel(matrix, sheet_name, file_name)
 
 if __name__ == '__main__':
-    #compare_spectrum_plot('coherence_000052.xlsx')
-    pass
+    compare_spectrum_plot('../../test_data//20240911_good_samples//fft.xlsx', high_light=True, linewidth=1, alpha=0.5)
