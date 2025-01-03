@@ -1,3 +1,4 @@
+from cProfile import label
 from typing import Any, List
 from typing import Literal
 import librosa
@@ -10,6 +11,7 @@ import matplotlib.pyplot as plt
 import scipy.spatial
 import memd.MEMD_all
 import os
+import seaborn as sns
 
 color = {
     'blue': (0, 0.4470, 0.7410),
@@ -283,16 +285,19 @@ def get_psd(df: pd.DataFrame, cut_off_freq: float = 0.0, fs: int = 1, nperseg: i
             domain:Literal['frequency', 'order'] = 'frequency', nfft: int = None, cols: int = 3, average:Literal['mean', 'median'] = 'mean',
             **arg):
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
+    index_name = ''
     if cut_off_freq > 0:
         detrend_df = butter_highpass(detrend_df, df.index, cut_off_freq, fs, 2)
     if domain == 'frequency':
         f, psd = signal.welch(detrend_df, fs=fs, nperseg=nperseg, window='hann', noverlap=noverlap, axis=0)
+        index_name = 'Frequency (Hz)'
     elif domain == 'order':
         f, psd = csd_order(x=detrend_df, y=detrend_df, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average, **arg)
         psd = np.real(psd)
+        index_name = 'Order'
     df_psd = pd.DataFrame(psd,columns=df.columns[:cols])
-    df_psd['Frequency (Hz)'] = f
-    df_psd = df_psd.set_index('Frequency (Hz)')
+    df_psd[index_name] = f
+    df_psd = df_psd.set_index(index_name)
     return df_psd
 
 def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:tuple = (10, 10), path_dir:str = './fig/'):
@@ -1226,5 +1231,54 @@ def cosine_similarity(df:pd.DataFrame, sheet_name:str, file_name:str):
     matrix = pd.DataFrame(1-m, index=df.columns, columns=df.columns)
     to_excel(matrix, sheet_name, file_name)
 
+def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial']):
+    '''
+    shows boxplot of different catagorical type and channel, to see the distrobution of data
+    
+    Parameters
+    ----------
+    file_name : input spectrum
+    '''
+    df = read_sheets(file_name, usecols=[0,1,2,3])
+    df.index.rename('Order', inplace=True)
+    df = df.transpose()
+    # add channel and label column, other column are features, seaborn reads dataframe better
+    for name in df.index:
+        for title in titles:
+            if title in name:
+                df.loc[name, 'channel'] = title
+                break
+        df.loc[name, 'label'] = class_label(sample_num=name.split(' ')[-1].split('_')[0])
+    
+    # draw boxplot
+    feature_per_figure = 10
+    fig, axs = plt.subplots(1, feature_per_figure, layout='constrained', sharey=True)
+    
+    for i in range(feature_per_figure):
+        sns.boxplot(y='channel', x=df.columns[i], data=df, hue='label', ax=axs[i])
+        sns.stripplot(y='channel', x=df.columns[i], data=df, alpha=0.5, hue='label', ax=axs[i])
+    
+    '''
+    num_labels = 3
+    classes_channel = [[[] for i in range(num_labels)] for j in titles]
+    for j in range(len(df.columns)):
+        label = class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0])
+        for i in range(len(titles)):
+            if titles[i] in df.columns[j]:
+                classes_channel[i][label].append(j)
+                break
+    
+    for i in range(len(titles)):
+        axs[i][0].set_ylabel(titles[i])
+        for j in range(feature_per_figure):
+            axs[0][j].set_title(j)
+            data_each_label = [df.iloc[j, classes_channel[i][k]].transpose() for k in range(num_labels)]
+            feature_df = pd.DataFrame(data_each_label, columns=['0','1','2'])
+            print(feature_df)
+            return
+            # sns.boxplot(x=[0,1,2], data=data_each_label, ax=axs[i][j])        
+    '''
+    plt.show()
+
 if __name__ == '__main__':
-    compare_spectrum_plot('../../test_data//20240911_good_samples//fft.xlsx', high_light=True, linewidth=1, alpha=0.5)
+    boxplot('psd.xlsx')
