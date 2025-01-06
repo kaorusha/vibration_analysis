@@ -13,6 +13,24 @@ All measurement that after FFT will saved in different sheet of the same `.xlsx`
 
 ## Reference
 
+### Machine Learning
+
+#### Auto-sklearn
+https://andy6804tw.github.io/crazyai-ml/20.Auto-Sklearn/
+
+#### Support vector machine
+
+* [Faulty bearing detection, classification and location in a three-phase induction motor based on Stockwell transform and support vector machine](https://www.sciencedirect.com/science/article/abs/pii/S0263224118308418)
+* [Classifying data using the SVM algorithm using Python](https://developer.ibm.com/tutorials/awb-classifying-data-svm-algorithm-python/)
+
+#### Similarity
+* https://ithelp.ithome.com.tw/articles/10268777
+* https://tomhazledine.com/cosine-similarity-alternatives/
+
+#### Shapley Value
+https://www.analyticsvidhya.com/blog/2019/11/shapley-value-machine-learning-interpretability-game-theory/
+
+
 ### Data processing
 
 #### Correlation
@@ -51,11 +69,6 @@ All measurement that after FFT will saved in different sheet of the same `.xlsx`
 Transform](https://www.iosrjournals.org/iosr-jvlsi/papers/Conf-ICETETR-2016/Volume%201/1.%2001-06.pdf)
 * [Bearing fault detection in a 3 phase induction motor using stator current frequency spectral subtraction with various wavelet decomposition techniques](https://www.sciencedirect.com/science/article/pii/S2090447917300771)
 * [FPGA based embedded system for induction motor failure monitoring at the start-up transient vibrations with wavelets](https://ieeexplore.ieee.org/document/4577701)
-
-#### Support vector machine
-
-* [Faulty bearing detection, classification and location in a three-phase induction motor based on Stockwell transform and support vector machine](https://www.sciencedirect.com/science/article/abs/pii/S0263224118308418)
-
 
 #### Variational Mode Decomposition
 
