@@ -1238,6 +1238,10 @@ def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down
     Parameters
     ----------
     file_name : input spectrum
+    
+    Examples
+    --------
+    >>> boxplot('psd.xlsx')
     '''
     df = read_sheets(file_name, usecols=[0,1,2,3])
     df.index.rename('Order', inplace=True)
@@ -1252,33 +1256,18 @@ def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down
     
     # draw boxplot
     feature_per_figure = 10
-    fig, axs = plt.subplots(1, feature_per_figure, layout='constrained', sharey=True)
+    stop_order = 150
     
-    for i in range(feature_per_figure):
-        sns.boxplot(y='channel', x=df.columns[i], data=df, hue='label', ax=axs[i])
-        sns.stripplot(y='channel', x=df.columns[i], data=df, alpha=0.5, hue='label', ax=axs[i])
+    for start_col in range(0, stop_order, feature_per_figure):
+        fig, axs = plt.subplots(len(titles), feature_per_figure, layout='constrained')
     
-    '''
-    num_labels = 3
-    classes_channel = [[[] for i in range(num_labels)] for j in titles]
-    for j in range(len(df.columns)):
-        label = class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0])
         for i in range(len(titles)):
-            if titles[i] in df.columns[j]:
-                classes_channel[i][label].append(j)
-                break
-    
-    for i in range(len(titles)):
-        axs[i][0].set_ylabel(titles[i])
-        for j in range(feature_per_figure):
-            axs[0][j].set_title(j)
-            data_each_label = [df.iloc[j, classes_channel[i][k]].transpose() for k in range(num_labels)]
-            feature_df = pd.DataFrame(data_each_label, columns=['0','1','2'])
-            print(feature_df)
-            return
-            # sns.boxplot(x=[0,1,2], data=data_each_label, ax=axs[i][j])        
-    '''
-    plt.show()
+            axs[i][0].set_ylabel(titles[i])
+            for j in range(feature_per_figure):
+                legend = 'auto' if i == 0 and j == 0 else False
+                sns.boxplot(x=df.loc[df['channel'] == titles[i], j + start_col], data=df.loc[df['channel'] == titles[i]], hue='label', ax=axs[i][j], legend=legend)
+                sns.stripplot(x=df.loc[df['channel'] == titles[i], j + start_col], data=df.loc[df['channel'] == titles[i]], alpha=0.5, hue='label', ax=axs[i][j], legend=legend)
+        plt.show()
 
 if __name__ == '__main__':
     boxplot('psd.xlsx')
