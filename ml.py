@@ -54,6 +54,31 @@ def fisher_score_show(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray,
     acc = accuracy_score(y_test, y_predict)
     print(acc)
 
+def compare_target_predict(df:pd.DataFrame, target:str, predict:str):
+    '''
+    show wrong prediction spectrum
+
+    Parameters
+    ----------
+    df : input dataframe
+    target : str
+        name pf target column
+    predict : str
+        name of predict column
+    
+    Examples
+    --------
+    >>> compare_target_predict(df, 'Type', 'Predict')
+    '''
+    df_wrong = df.loc[df[target] != df[predict], :]
+    fig, axs = plt.subplots(1,1, layout='constrained')
+    for i in df_wrong.index:
+        axs.plot(df_wrong.loc[i][:151], label= i + ': target %i predict %i'%(df_wrong.loc[i, 'Type'], df_wrong.loc[i, 'Predict']))
+    axs.set_xticks(np.arange(0,151, step=10))
+    axs.set_yscale('log')
+    axs.legend()
+    plt.show()
+
 if __name__ == '__main__':
     #X = signal_processing.read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True)
     #X = X.transpose()
