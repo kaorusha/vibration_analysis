@@ -161,7 +161,7 @@ def get_fft(df: pd.DataFrame, cut_off_freq = 0, fs = 48000, nperseg=8192, noverl
             
     return sp_averaged
 
-def annotatePeaks(x: Any, y: Any, ax: matplotlib.axes.Axes = None, prominence:Any|None = None, dot = None, 
+def annotatePeaks(x: Any, y: Any, ax: matplotlib.axes.Axes = None, prominence = None, dot = None, 
                   annotateX=True, annotateY=False,
                   rotation = 45, 
                   xytext=(0, 30), textcoords='offset pixels',
