@@ -2,6 +2,8 @@ from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.datasets import load_iris
 import signal_processing
 from skfeature.function.similarity_based import fisher_score
 from sklearn import svm
@@ -11,7 +13,7 @@ import shap
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
-from xgboost.sklearn import XGBRegressor
+#from xgboost.sklearn import XGBRegressor
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 from sklearn import tree
 
@@ -53,9 +55,13 @@ def fisher_score_show(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray,
     print(acc)
 
 if __name__ == '__main__':
-    X = signal_processing.read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True)
-    X = X.transpose()
-    y = np.array([signal_processing.class_label(sample.split(' ')[-1].split('_')[0]) for sample in X.index])
-    x_train, x_test, y_train, y_test = train_test_split(X.to_numpy(), y, test_size=0.2, random_state=40)
+    #X = signal_processing.read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True)
+    #X = X.transpose()
+    #y = np.array([signal_processing.class_label(sample.split(' ')[-1].split('_')[0]) for sample in X.index])
+    #x_train, x_test, y_train, y_test = train_test_split(X.to_numpy(), y, test_size=0.2, random_state=40)
+    iris = load_iris()
+    df_data = pd.DataFrame(data= np.c_[iris['data'], iris['target']],
+                     columns= ['SepalLengthCm','SepalWidthCm','PetalLengthCm','PetalWidthCm','Species'])
+    print(df_data)
     
     

@@ -27,7 +27,16 @@ https://andy6804tw.github.io/crazyai-ml/20.Auto-Sklearn/
 * https://ithelp.ithome.com.tw/articles/10268777
 * https://tomhazledine.com/cosine-similarity-alternatives/
 
+#### fisher score
+Install [scikit-feature](https://github.com/jundongl/scikit-feature)
+```sh
+pip install git+https://github.com/jundongl/scikit-feature.git
+```
+[Examples](https://blog.csdn.net/qq_39923466/article/details/118809782)
+
+
 #### Shapley Value
+Install [shap](https://pypi.org/project/shap/)
 https://www.analyticsvidhya.com/blog/2019/11/shapley-value-machine-learning-interpretability-game-theory/
 
 
