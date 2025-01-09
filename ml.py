@@ -59,9 +59,4 @@ if __name__ == '__main__':
     #X = X.transpose()
     #y = np.array([signal_processing.class_label(sample.split(' ')[-1].split('_')[0]) for sample in X.index])
     #x_train, x_test, y_train, y_test = train_test_split(X.to_numpy(), y, test_size=0.2, random_state=40)
-    iris = load_iris()
-    df_data = pd.DataFrame(data= np.c_[iris['data'], iris['target']],
-                     columns= ['SepalLengthCm','SepalWidthCm','PetalLengthCm','PetalWidthCm','Species'])
-    print(df_data)
-    
     
