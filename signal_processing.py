@@ -277,7 +277,7 @@ def acc_processing_df(
         **arg
         ):
     '''
-    given an input as dataframe type of level vs time data, specificly accelerometer cencor data, do the selected analysis
+    given an input as dataframe type of level vs time data, specificly accelerometer sensor data, do the selected analysis
     and output to specified xlsx file, each output is saved in one sheet of a workbook.
 
     Parameters
