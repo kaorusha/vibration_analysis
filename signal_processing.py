@@ -208,7 +208,8 @@ def stat_calc(df: pd.DataFrame):
     return df_stats
 
 def get_psd(df: pd.DataFrame, cut_off_freq: float = 0.0, fs: int = 1, nperseg: int = 8192, noverlap: int = 8192 * 0.75, 
-            domain:Literal['frequency', 'order'] = 'frequency', nfft: int = None, cols: int = 3, average:Literal['mean', 'median'] = 'mean',
+            domain:Literal['frequency', 'order'] = 'frequency', nfft: int = None, cols: int = 3, 
+            average:Literal['mean', 'median', 'None'] = 'mean',
             **arg):
     detrend_df = df - np.mean(df.to_numpy(), axis=0)
     index_name = ''
@@ -221,9 +222,15 @@ def get_psd(df: pd.DataFrame, cut_off_freq: float = 0.0, fs: int = 1, nperseg: i
         f, psd = csd_order(x=detrend_df, y=detrend_df, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average, **arg)
         psd = np.real(psd)
         index_name = 'Order'
-    df_psd = pd.DataFrame(psd,columns=df.columns[:cols])
-    df_psd[index_name] = f
-    df_psd = df_psd.set_index(index_name)
+    if average == 'None':
+        # use dictionary of dataframe
+        df_psd = {}
+        for sensor_channel in range(psd.shape[-1]):
+            df_psd[df.columns[sensor_channel]] = pd.DataFrame(psd[:,:,sensor_channel], columns=f)
+    else:
+        df_psd = pd.DataFrame(psd,columns=df.columns[:cols])
+        df_psd[index_name] = f
+        df_psd = df_psd.set_index(index_name)
     return df_psd
 
 def save_bar_plot(name: Any, value:Any, plot_title:str, file_name:str, figsize:tuple = (10, 10), path_dir:str = './fig/'):
@@ -294,7 +301,11 @@ def acc_processing_df(
     if analysis_mask & 0b0100:
         # psd
         df_psd = get_psd(df, **arg)
-        to_excel(df_psd, sheet_name, psd_result_filename)
+        if type(df_psd) is dict:
+            for key, value in df_psd.items():
+                to_excel(value, key, psd_result_filename)
+        else:
+            to_excel(df_psd, sheet_name, psd_result_filename)
     if analysis_mask & 0b1000:
         # coherence
         df_Cxy = coherence(x=coherence_compare_df, y=df, **arg)    
@@ -381,7 +392,8 @@ def rename_col(df: pd.DataFrame, title:str):
     # rewrite column title adding title
     df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
 
-def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True):
+def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True,
+                axis: int = 1):
     """
     read previous exported excel file, loop for each sheet, combine as one pandas data frame, or return a dictionary of dataframe
     """
@@ -392,7 +404,7 @@ def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', ren
         df_dict = pd.read_excel(filename, sheet_name=None, header=0, index_col=0, usecols=usecols)
     if file_type == 'hdf':
         df_dict = pd.read_excel(filename, sheet_name=None, header=0, index_col=0, skiprows=13, usecols=usecols)
-        for sheet in workbook.sheetnames:
+        for sheet in workbook.sheetnames:   
             title = workbook[sheet]["B5"].value
             rename_column_method(df_dict[sheet], title)
     if combine == False:
@@ -400,7 +412,13 @@ def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', ren
     # combine all fft to the same dataframe
     df_all_fft = pd.DataFrame()
     for sheet in workbook.sheetnames:
-        df_all_fft = pd.concat([df_all_fft, df_dict[sheet]], axis=1)
+        if axis == 0:
+            # when combining sheets, add a column for its sheet_name
+            df_dict[sheet].reset_index(drop=True, inplace=True)
+            df_dict[sheet]['name'] = sheet
+            df_all_fft = pd.concat([df_all_fft, df_dict[sheet]], axis=0)
+        else:
+            df_all_fft = pd.concat([df_all_fft, df_dict[sheet]], axis=1)
     workbook.close()
     return df_all_fft
 
@@ -838,7 +856,7 @@ def compare_rps_of_rpm_vs_time_file(dir):
             df_dict[key] = df
     return df_dict
 
-def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:int, nfft = None, average:Literal['mean', 'median'] = 'mean', **arg):
+def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:int, nfft = None, average:Literal['mean', 'median', 'None'] = 'mean', **arg):
     '''
     the time domain is transfered to order domain, every data sample in the input signal represnet the same increment of rotation angle,
     x and y input signal has the same sampling angle.
@@ -852,7 +870,7 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:in
         `None`, the FFT length is `nperseg`. Defaults to `None`.
         controlled the frequency resolution of the spectrum, using zero-padding to increase the resolution as nfft/nperseg
     cols : use first int(cols) for fft analysis, this values usually equal to the number of accelerometers.
-    average : { ‘mean’, ‘median’ },
+    average : { ‘mean’, ‘median’, 'None' },
                     Method to use when averaging periodograms. If the spectrum is complex, the average is computed separately for the real and imaginary parts. Defaults to ‘mean’.
     '''
     win = np.hanning(nperseg) if nfft == None else np.hanning(nfft)
@@ -896,6 +914,8 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:in
         Pxy /= bias
     elif average == 'mean':
         Pxy = np.mean(Pxy, axis=0)
+    elif average == 'None':
+        print('return Pxy without averaging over windows')
     else:
         raise ValueError('choose from specified methods')
     
@@ -1196,4 +1216,5 @@ def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down
         plt.show()
 
 if __name__ == '__main__':
-    boxplot('psd.xlsx')
+    acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+                         domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
