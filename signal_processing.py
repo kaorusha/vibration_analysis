@@ -472,6 +472,8 @@ def acc_processing_excel(
                          comparing_sample_lr='../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx',
                          comparing_sample_ud='../../test_data//Defective_products_on_line_20%//acc_data//000045_ud.xlsx'
                          )
+    >>>     acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+                         domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
     """
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
@@ -1216,5 +1218,4 @@ def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down
         plt.show()
 
 if __name__ == '__main__':
-    acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
-                         domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
+    pass
