@@ -464,7 +464,7 @@ def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
             df = pd.read_parquet(dir+file_name)
             print("read excel %s"%file_name)
             if parse_func is not None:
-                df['name'] = parse_func(file_name)
+                df['sample_num'] = parse_func(file_name)
             df_all = pd.concat([df_all, df], axis=0)
     df_all.reset_index(drop=True, inplace=True)
     return df_all
