@@ -1,4 +1,3 @@
-from cProfile import label
 from typing import Any, List
 from typing import Literal
 import librosa
@@ -272,6 +271,14 @@ def to_excel(df:pd.DataFrame, sheet_name:str, filename:str):
         writer.book.save(filename)
         writer.book.close()
 
+def to_parquet(df:pd.DataFrame, suffix:str, filename:str):
+    '''
+    use same parameter structure as to_excel(), since parquet file format does not have sheet, use suffix instead.
+    filename might contain .parquet using the same pattern as to_excel
+    '''
+    filename = filename.removesuffix('.gzip').removesuffix('.parquet')
+    df.to_parquet(path=filename + '_' + suffix + '.parquet.gzip', compression='gzip')
+
 def acc_processing_df(
         df: pd.DataFrame,
         analysis_mask: int,
@@ -281,6 +288,7 @@ def acc_processing_df(
         fft_result_filename:str = 'fft.xlsx',
         psd_result_filename:str = 'psd.xlsx',
         Cxy_result_filename:str = 'coherence.xlsx',
+        file_export_func = to_excel,
         **arg
         ):
     '''
@@ -291,25 +299,31 @@ def acc_processing_df(
     ----------
     domain : all analysis use the same domain 
     '''
+    export_funcs = [to_excel, to_parquet]
+
+    if file_export_func not in export_funcs:
+        raise ValueError("Unknown export option '{}', must be one of: {}"
+                         .format(file_export_func, export_funcs))
+
     if analysis_mask & 0b0001:
         # state
         df_stats = pd.concat(df_stats, stat_calc(df))
     if analysis_mask & 0b0010:
         # fft
         df_fft = get_fft(df, **arg)
-        to_excel(df_fft, sheet_name, fft_result_filename)
+        file_export_func(df_fft, sheet_name, fft_result_filename)
     if analysis_mask & 0b0100:
         # psd
         df_psd = get_psd(df, **arg)
         if type(df_psd) is dict:
             for key, value in df_psd.items():
-                to_excel(value, key, psd_result_filename)
+                file_export_func(value, key, psd_result_filename)
         else:
-            to_excel(df_psd, sheet_name, psd_result_filename)
+            file_export_func(df_psd, sheet_name, psd_result_filename)
     if analysis_mask & 0b1000:
         # coherence
         df_Cxy = coherence(x=coherence_compare_df, y=df, **arg)    
-        to_excel(df_Cxy, sheet_name, Cxy_result_filename)
+        file_export_func(df_Cxy, sheet_name, Cxy_result_filename)
         
 def acc_processing_hdf(
         hdf_level_time_filename:str,
@@ -422,6 +436,39 @@ def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', ren
     workbook.close()
     return df_all_fft
 
+def parse_digital(filename:str):
+    '''
+    parse 6-number digital sample number from filename
+    '''
+    for s in filename.split('_'):
+        if s.isdigit():
+            return s
+
+def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
+    '''
+    read keyword filtered parquet files, and combined as a whole dataframe
+    
+    Parameters
+    ----------
+    ketword : the selected channel as use case
+    dir : the location of all parquet files
+    parse_func : the function for getting the value of ['name'] column
+
+    Examples
+    --------
+    >>>     df = read_parquet_keyword('ud_up', dir, parse_digital)
+    '''
+    df_all = pd.DataFrame()
+    for file_name in os.listdir(dir):
+        if '.parquet' in file_name and keyword in file_name:
+            df = pd.read_parquet(dir+file_name)
+            print("read excel %s"%file_name)
+            if parse_func is not None:
+                df['name'] = parse_func(file_name)
+            df_all = pd.concat([df_all, df], axis=0)
+    df_all.reset_index(drop=True, inplace=True)
+    return df_all
+
 def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
     idx_list = []
     for peak in peak_dic:
@@ -474,6 +521,8 @@ def acc_processing_excel(
                          )
     >>>     acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
                          domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
+    >>>     acc_processing_excel(dir= dir + 'acc_data_100%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/300), noverlap=10,
+                         domain='order', nfft=1024, cols=3, average='None', psd_result_filename= dir + 'psd_window.parquet', file_export_func = to_parquet)
     """
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
@@ -917,7 +966,7 @@ def csd_order(x:pd.DataFrame, y:pd.DataFrame, nperseg:int, noverlap:int, cols:in
     elif average == 'mean':
         Pxy = np.mean(Pxy, axis=0)
     elif average == 'None':
-        print('return Pxy without averaging over windows')
+        print('return Pxy without averaging over %d windows'%Pxy.shape[0])
     else:
         raise ValueError('choose from specified methods')
     
