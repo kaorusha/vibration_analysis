@@ -5,9 +5,9 @@ import pandas as pd
 import sys
 import time
 with nidaqmx.Task() as task:
-    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai0", "acc0", sensitivity=10.22)
-    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai1", "acc1", sensitivity=10.11)
-    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai2", "acc2", sensitivity=10.28)
+    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai0", "acc0", sensitivity=10.22) # serial no: 506751
+    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai1", "acc1", sensitivity=10.11) # serial no: 506750
+    task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai2", "acc2", sensitivity=10.28) # serial no: 506773
     #task.ci_channels.add_ci_freq_chan use this https://github.com/ni/nidaqmx-python/blob/master/examples/counter_in/read_freq.py
     task.ai_channels.add_ai_accel_chan("cDAQ1Mod1/ai3", "fg", sensitivity=600)
     fs = 51200
@@ -17,7 +17,7 @@ with nidaqmx.Task() as task:
     data = task.read(READ_ALL_AVAILABLE)
     t2 = time.perf_counter()
     print('acquire time: {}'.format(t2 - t1))
-    dir = 'd:\\cindy_hsieh\\My Documents\\project\\vibration_analysis\\test_data\\20240911_good_samples\\'
+    dir = '../../test_data//20250305_good_samples//acc_data_100%//'
     file_name = '000027'
     file_name += '_lr' if sys.argv[1] == '1' else '_ud'
     if file_name.endswith('lr'):
