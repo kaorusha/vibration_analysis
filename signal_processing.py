@@ -462,6 +462,8 @@ def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
     for file_name in os.listdir(dir):
         if '.parquet' in file_name and keyword in file_name:
             df = pd.read_parquet(dir+file_name)
+            # cast column labels to int
+            df.rename(columns=int, inplace=True)
             print("read excel %s"%file_name)
             if parse_func is not None:
                 df['sample_num'] = parse_func(file_name)
