@@ -1153,16 +1153,18 @@ def class_label(sample_num:str):
     else:
         raise ValueError('undefined sample number')
 
-def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial'], **arg):
+def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial'],
+                          xmax = None, **arg):
     '''
     read exported excel file of spectrum, plot with seperated sensor channel, and the color distinguished with abnormal type
 
     Parameters
     ----------
     file_name : spectrum data.xlsx, can be fft, psd, coherence...
-    high_light: whether to high light the frequency where all normal samples are greater or lower than abnormal samples
-    titles: controls which sensor position data shows up
-    **arg: parameters pass to plot()
+    high_light : whether to high light the frequency where all normal samples are greater or lower than abnormal samples
+    titles : controls which sensor position data shows up
+    xmax : max value of the x axis, default None.
+    **arg : parameters pass to plot()
 
     Example
     -------
@@ -1173,6 +1175,8 @@ def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = 
 
     '''
     df = read_sheets(file_name, usecols=[0,1,2,3], combine=True)
+    if xmax is not None:
+        df = df.iloc[:xmax]
     # difine sample classification
     fig, axs = plt.subplots(len(titles),1, sharex='col', layout='constrained')
     colors = [color['green'], color['orange'], color['blue']]
