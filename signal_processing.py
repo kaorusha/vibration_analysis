@@ -42,7 +42,7 @@ def butter_highpass(input, t, cutoff, fs, order = 5, axis = 0, visualize = False
     return output
 
 def fft(df:pd.DataFrame, fs = 1, nperseg=8192, window = np.hanning(8192), noverlap=8192//2, fg_column=3, pulse_per_round=2, 
-        nfft=None, domain: Literal["frequency", "order"] = "frequency", cols=3):
+        nfft=None, domain: Literal["frequency", "order"] = "frequency", cols=3, **arg):
     """
     do FFT with window frame, return complex number of each window frame
     
@@ -81,11 +81,18 @@ def fft(df:pd.DataFrame, fs = 1, nperseg=8192, window = np.hanning(8192), noverl
     if domain == 'frequency':
         frames = librosa.util.frame(df, frame_length=nperseg, hop_length=int(nperseg-noverlap), axis=0)
     elif domain == 'order':
-        frames = slice_frame(df, fg_column=fg_column, threshold=0, pulse_per_round=pulse_per_round,
-                             estimated_frame_len=nperseg, resample_len=nfft, NumRotations=noverlap, cols=cols)
+        frames = slice_frame(df, fg_column=fg_column, threshold=0, pulse_per_round=pulse_per_round, cols=cols, **arg)
         # detrend again for the time synchronous averaged frame
         signal.detrend(frames, axis=1, type='constant', overwrite_data=True)
-        fs = nperseg if nfft == None else nfft
+        #fs = nperseg if nfft == None else nfft
+
+    # reshape if the frame length is unequal to nfft 
+    if frames.shape[1] != nfft:
+        # get the reshaped frame_numbers
+        scale = nfft / frames.shape[1]
+        frame_number = int(frames.shape[0] - (frames.shape[0] % scale))
+        frames = frames[:frame_number, :, :]
+        frames = frames.reshape((int(frames.shape[0]/scale), nfft, -1))
 
     windowed_frames = np.empty(frames.shape) # frame.shape = [frame_numbers, frame_length, columns_dataframe]
     for col in range(frames.shape[-1]):
@@ -218,7 +225,7 @@ def get_psd(df: pd.DataFrame, cut_off_freq: float = 0.0, fs: int = 1, nperseg: i
         f, psd = signal.welch(detrend_df, fs=fs, nperseg=nperseg, window='hann', noverlap=noverlap, axis=0)
         index_name = 'Frequency (Hz)'
     elif domain == 'order':
-        f, psd = csd_order(x=detrend_df, y=detrend_df, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average, **arg)
+        f, psd = csd_order(x=detrend_df, y=detrend_df, fs = fs, nperseg=nperseg, noverlap=noverlap, cols=cols, nfft=nfft, average=average, **arg)
         psd = np.real(psd)
         index_name = 'Order'
     if average == 'None':
@@ -523,6 +530,9 @@ def acc_processing_excel(
                          domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
     >>>     acc_processing_excel(dir= dir + 'acc_data_100%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/300), noverlap=10,
                          domain='order', nfft=1024, cols=3, average='None', psd_result_filename= dir + 'psd_window.parquet', file_export_func = to_parquet)
+    >>>     acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data_20%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+                         domain='order', nfft=10240, cols=3, average='mean', psd_result_filename='../../test_data//20250331_test//psd.xlsx',
+                         estimated_frame_len=int(51200/44), resample_len=1024, NumRotations=10)
     """
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
