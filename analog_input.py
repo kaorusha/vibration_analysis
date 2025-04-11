@@ -25,5 +25,5 @@ with nidaqmx.Task() as task:
     if file_name.endswith('ud'):
         df = pd.DataFrame({file_name+'_up':data[0], file_name+'_down':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
     df.iloc[:,0:3].plot(title='acc data', xlabel='time(sec)', ylabel='g')
-    df.to_excel(dir + '%s.xlsx'%file_name, sheet_name='acc_data', index=False)
+    df.to_parquet(dir + '%s.parquet.gzip'%file_name, compression='gzip', index=False)
     plt.show()
