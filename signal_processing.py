@@ -469,9 +469,9 @@ def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
     for file_name in os.listdir(dir):
         if '.parquet' in file_name and keyword in file_name:
             df = pd.read_parquet(dir+file_name)
-            # cast column labels to int
+            # cast column labels to string
             df.rename(columns=str, inplace=True)
-            print("read excel %s"%file_name)
+            print("read %s"%file_name)
             if parse_func is not None:
                 df['sample_num'] = parse_func(file_name)
             df_all = pd.concat([df_all, df], axis=0)
@@ -490,6 +490,15 @@ def class_average_peak(peak_dic:dict, df_fft: pd.DataFrame):
 
     return df_fft.iloc[idx_list].mean()
 
+def read_acc_file(path:str, usecols:list = None):
+    '''
+    read acc file of different file extension, currently only include .xlsx or .parquet
+    '''
+    if path.endswith('.parquet.gzip') or path.endswith('.parquet'):
+        return pd.read_parquet(path = path, columns=usecols)
+    if path.endswith('.xlsx'):
+        return pd.read_excel(io=path, header=0, usecols=usecols)
+
 def acc_processing_excel(
         dir:str,
         analysis_mask: int,
@@ -502,10 +511,8 @@ def acc_processing_excel(
         usecols:list = None,
         **arg):
     """
-    read level vs time .xlsx file, loop for each file in the directory, read as panda data frame and do selected processing, 
-    save the result of from multiple file of raw acc data into seperate excel sheet. Because order is representes as number
-    of times of rotation frequency, the orders of each acc file will be different since the rotation frequency is changing.
-    The FFT result should save in different sheet as the indexing order is different.
+    read level vs time .xlsx or .parquet file, loop for each file in the directory, read as panda data frame and do selected processing, 
+    save the result of selected processing to selected output format, if excel is chosen, the result will save into seperate excel sheet.
     
     Parameters
     ----------
@@ -539,13 +546,13 @@ def acc_processing_excel(
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
     
-    comparing_sample_lr_df = pd.read_excel(comparing_sample_lr, header=0, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
-    comparing_sample_ud_df = pd.read_excel(comparing_sample_ud, header=0, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
+    comparing_sample_lr_df = read_acc_file(comparing_sample_lr, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
+    comparing_sample_ud_df = read_acc_file(comparing_sample_ud, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
 
     for file_name in os.listdir(dir):
-        if file_name.endswith('.xlsx'):
-            df = pd.read_excel(dir+file_name, header=0, usecols=usecols)
-            print("read excel %s"%file_name)
+        if file_name.endswith('.xlsx') or file_name.endswith('parquet') or file_name.endswith('parquet.gzip'):
+            df = read_acc_file(dir+file_name, usecols=usecols)
+            print("read %s"%file_name)
             acc_processing_df(df = df, analysis_mask=analysis_mask, sheet_name=file_name[:-5],
                               df_stats=df_stats if analysis_mask & 0b0001 else None, 
                               coherence_compare_df=comparing_sample_lr_df if 'lr' in file_name else comparing_sample_ud_df,
@@ -1194,7 +1201,7 @@ def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = 
     for i in range(len(titles)):
         if 'coherence' not in file_name:
             axs[i].set_yscale('log')
-        axs[i].set_xlim(0, df.index[-1])
+        axs[i].set_xlim(0, 20)
         axs[i].set_title(titles[i])
     
     for j in range(len(df.columns)):
