@@ -414,9 +414,20 @@ def rename_col(df: pd.DataFrame, title:str):
     df.rename(columns=lambda x: title[15:22] + '_' + x.split()[0][4:], inplace=True)
 
 def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', rename_column_method = None, usecols = None, combine = True,
-                axis: int = 1):
+                axis: int = 1, df:pd.DataFrame = None):
     """
     read previous exported excel file, loop for each sheet, combine as one pandas data frame, or return a dictionary of dataframe
+    
+    Parameters
+    ----------
+    file_type : 
+        * 'hdf': head acoustic file format, which has a header before the data
+        * 'normal': only the first row be the header
+    rename_column_method : a rename function
+    usecols : parameter for pd.read_excel
+    combine : if True, combine the workbook sheets to a single dataframe
+    axis : the pd.concat axis
+    df : the existing df for combine
     """
     workbook = openpyxl.load_workbook(filename, read_only=True, data_only=True, keep_links=False)
     print("There are %d"%len(workbook.sheetnames) + " sheets in this workbook ( " + filename + " )")
@@ -431,7 +442,7 @@ def read_sheets(filename:str, file_type:Literal['hdf', 'normal'] = 'normal', ren
     if combine == False:
         return df_dict 
     # combine all fft to the same dataframe
-    df_all_fft = pd.DataFrame()
+    df_all_fft = pd.DataFrame() if df is None else df
     for sheet in workbook.sheetnames:
         if axis == 0:
             # when combining sheets, add a column for its sheet_name
@@ -450,6 +461,15 @@ def parse_digital(filename:str):
     for s in filename.split('_'):
         if s.isdigit():
             return s
+
+def cast_column_to_str(df:pd.DataFrame, ndigits:int):
+    '''
+    cast column labels to string. `Autosklearn` only accepts column label type int or string, 
+    so we want to cast float into string to prevent fitting errors.
+    when read dataframe from excel or parquet file, the float number is not precise, it need to be 
+    rounded to a specified number of decimal places
+    '''
+    return df.reindex(columns=[str(round(num, ndigits)) for num in df.columns])
 
 def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
     '''
@@ -1170,28 +1190,30 @@ def class_label(sample_num:str):
     else:
         raise ValueError('undefined sample number')
 
-def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial'],
-                          xmax = None, **arg):
+def compare_spectrum_plot(df:pd.DataFrame, high_light:bool = False, titles:list = ['left','right','lr_axial', 'up', 'down','ud_axial'],
+                          xmax = None, mode:Literal['coherence', 'normal'] = 'normal', label_method = class_label, **arg):
     '''
     read exported excel file of spectrum, plot with seperated sensor channel, and the color distinguished with abnormal type
 
     Parameters
     ----------
-    file_name : spectrum data.xlsx, can be fft, psd, coherence...
+    df : spectrum data, can be fft, psd, coherence...
     high_light : whether to high light the frequency where all normal samples are greater or lower than abnormal samples
     titles : controls which sensor position data shows up
     xmax : max value of the x axis, default None.
+    mode : 
+        * coherence : y axis use **linear** scale and high light all nonoverlapping groups
+        * normal : y axis use **log** scale and high light all nonoverlapping groups
     **arg : parameters pass to plot()
 
     Example
     -------
-    >>> compare_spectrum_plot('coherence.xlsx')
-    >>> compare_spectrum_plot('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx', high_light=True, linewidth=1, alpha=0.5)
-    >>> compare_spectrum_plot('../../test_data//20240911_good_samples//fft.xlsx', high_light=True, linewidth=1, alpha=0.5)
-    >>> compare_spectrum_plot('psd.xlsx', high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot(df = read_sheet('coherence.xlsx'))
+    >>> compare_spectrum_plot(df = read_sheet('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx'), high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot(df = read_sheet('../../test_data//20240911_good_samples//fft.xlsx'), high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot(df = read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True), high_light=True, linewidth=1, alpha=0.5, xmax = 20)
 
     '''
-    df = read_sheets(file_name, usecols=[0,1,2,3], combine=True)
     if xmax is not None:
         df = df.iloc[:xmax]
     # difine sample classification
@@ -1199,13 +1221,13 @@ def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = 
     colors = [color['green'], color['orange'], color['blue']]
 
     for i in range(len(titles)):
-        if 'coherence' not in file_name:
+        if mode == 'normal':
             axs[i].set_yscale('log')
-        axs[i].set_xlim(0, 20)
+        axs[i].set_xlim(0, df.index[-1])
         axs[i].set_title(titles[i])
     
     for j in range(len(df.columns)):
-        label_sample = class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0])
+        label_sample = label_method(df.columns[j].split(' ')[-1].split('_')[0])
         for i in range(len(titles)):
             if titles[i] in df.columns[j]:
                 axs[i].plot(df.index, df.iloc[:,j], color=colors[label_sample], **arg)
@@ -1216,7 +1238,7 @@ def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = 
         abnormal_column = [[] for i in titles]
         
         for j in range(len(df.columns)):
-            if class_label(sample_num=df.columns[j].split(' ')[-1].split('_')[0]) == 0:
+            if label_method(df.columns[j].split(' ')[-1].split('_')[0]) == 0:
                 for i in range(len(titles)):
                     if titles[i] in df.columns[j]:
                         normal_column[i].append(j)
@@ -1229,7 +1251,7 @@ def compare_spectrum_plot(file_name:str, high_light:bool = False, titles:list = 
 
         bool_high_light = np.zeros((len(df.index), len(titles)), dtype=bool)
         for idx in range(len(df.index)):
-            if 'coherence' in file_name:
+            if mode == 'coherence':
                 for i in range(len(titles)):
                     if max(df.iloc[idx, abnormal_column[i]]) < min(df.iloc[idx, normal_column[i]]):
                         bool_high_light[idx, i] = True
