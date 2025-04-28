@@ -116,20 +116,25 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, column:list):
     df['sample_num'] = [name[:6] for name in df.index]
     
     # select a particular channel and shuffle
-    X_test = df.loc[df['channel'] == keyword].reset_index(drop=True)
-    X_test = X_test.reindex(columns=column)
+    X_test = df.loc[df['channel'] == keyword]
+    X_test = signal_processing.cast_column_to_str(X_test.drop(columns=['channel']), 1, labels=column)
     X_test = X_test.iloc[:, :col]
+    if X_test.isna().any().any():
+        raise ValueError('nan values exist in the teat data.')
+    
     # 匯入模型
     clf = load(joblib)
     # 模型預測測試
-    res = df.loc[df['channel'] == keyword].iloc[:, -1:]
+    res = df.loc[df['channel'] == keyword].iloc[:, -1:].set_index('sample_num')
     res['predict'] = clf.predict(X_test)
+    print(joblib.split('/')[-1][:-7])
     print(res)
 
 if __name__ == '__main__':
     X = signal_processing.read_parquet_keyword('lr_left', 
                                            dir = '../../test_data//psd_100%//psd_window_high_resolution_100%//', 
                                            parse_func=signal_processing.parse_digital).sample(frac=1).reset_index(drop=True)
+    channel = 'lr_left'
     predict(psd_file='../../test_data//20250410_test_samples//psd_100%//psd_high_resolution.xlsx', 
-            joblib='../../model//100%_high_resolution//lr_left_high_resolution_set1_1280_v1.joblib',
-            keyword='lr_left', col=1280, column=X.columns)
+            joblib='../../model//100duty_high_resolution//%s_high_resolution_set1_1280_v1.joblib'%channel,
+            keyword=channel, col=1280, column=X.columns)
