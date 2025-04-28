@@ -462,14 +462,26 @@ def parse_digital(filename:str):
         if s.isdigit():
             return s
 
-def cast_column_to_str(df:pd.DataFrame, ndigits:int):
+def cast_column_to_str(df:pd.DataFrame, ndigits:int, labels:list = None):
     '''
     cast column labels to string. `Autosklearn` only accepts column label type int or string, 
     so we want to cast float into string to prevent fitting errors.
     when read dataframe from excel or parquet file, the float number is not precise, it need to be 
     rounded to a specified number of decimal places
     '''
-    return df.reindex(columns=[str(round(num, ndigits)) for num in df.columns])
+    # make a dictionary for mapper
+    mapper = {}
+    
+    if labels is None:
+        for col in df.columns:
+            mapper[col] = str(round(col, ndigits))
+    else:
+        if len(df.columns) != len(labels):
+            raise ValueError('df columns length does not match labels')
+        for col, label in zip(df.columns, labels):
+            mapper[col] = label
+    #print(mapper)
+    return df.rename(columns=mapper, copy=False)
 
 def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
     '''
