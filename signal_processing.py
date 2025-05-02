@@ -474,7 +474,8 @@ def cast_column_to_str(df:pd.DataFrame, ndigits:int, labels:list = None):
     
     if labels is None:
         for col in df.columns:
-            mapper[col] = str(round(col, ndigits))
+            if type(col) is not str:
+                mapper[col] = str(round(col, ndigits))
     else:
         if len(df.columns) != len(labels):
             raise ValueError('df columns length does not match labels')
