@@ -1221,9 +1221,9 @@ def compare_spectrum_plot(df:pd.DataFrame, high_light:bool = False, titles:list 
 
     Example
     -------
-    >>> compare_spectrum_plot(df = read_sheet('coherence.xlsx'))
-    >>> compare_spectrum_plot(df = read_sheet('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx'), high_light=True, linewidth=1, alpha=0.5)
-    >>> compare_spectrum_plot(df = read_sheet('../../test_data//20240911_good_samples//fft.xlsx'), high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot(df = read_sheets('coherence.xlsx'))
+    >>> compare_spectrum_plot(df = read_sheets('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx'), high_light=True, linewidth=1, alpha=0.5)
+    >>> compare_spectrum_plot(df = read_sheets('../../test_data//20240911_good_samples//fft.xlsx'), high_light=True, linewidth=1, alpha=0.5)
     >>> compare_spectrum_plot(df = read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True), high_light=True, linewidth=1, alpha=0.5, xmax = 20)
 
     '''
