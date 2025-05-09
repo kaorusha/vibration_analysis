@@ -502,8 +502,6 @@ def read_parquet_keyword(keyword: str, dir:str, parse_func:None):
     for file_name in os.listdir(dir):
         if '.parquet' in file_name and keyword in file_name:
             df = pd.read_parquet(dir+file_name)
-            # cast column labels to string
-            df.rename(columns=str, inplace=True)
             print("read %s"%file_name)
             if parse_func is not None:
                 df['sample_num'] = parse_func(file_name)
@@ -1323,6 +1321,21 @@ def boxplot(file_name:str, titles:list = ['left','right','lr_axial', 'up', 'down
                 sns.boxplot(x=df.loc[df['channel'] == titles[i], j + start_col], data=df.loc[df['channel'] == titles[i]], hue='label', ax=axs[i][j], legend=legend)
                 sns.stripplot(x=df.loc[df['channel'] == titles[i], j + start_col], data=df.loc[df['channel'] == titles[i]], alpha=0.5, hue='label', ax=axs[i][j], legend=legend)
         plt.show()
+
+def calculate_spectral_stats(low_order:int, high_order:int, df:pd.DataFrame):
+    '''
+    calculate the averaged energy and standard deviation of the specified range of spectrum (from low_idx to high_idx order)
+    '''
+    idx = len(df.columns) - 1
+    while isinstance(df.columns[idx], str):
+        idx -= 1
+        
+    low_idx = binary_search(df.columns, 0, idx, low_order)
+    high_idx = binary_search(df.columns, 0, idx, high_order)
+    print('calculate between %i and %i'%(low_idx, high_idx))
+    df['mean_energy_%i_%i'%(low_order, high_order)] = df.iloc[:, low_idx:high_idx].mean(axis=1)
+    df['std_energy_%i_%i'%(low_order, high_order)] = df.iloc[:, low_idx:high_idx].std(axis=1)
+    return df 
 
 if __name__ == '__main__':
     pass
