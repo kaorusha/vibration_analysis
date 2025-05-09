@@ -1,23 +1,14 @@
-from sklearn.model_selection import train_test_split
-import pandas as pd
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.datasets import load_iris
 import signal_processing
-from skfeature.function.similarity_based import fisher_score
-from sklearn import svm
-from sklearn.metrics import accuracy_score, mean_squared_error
-
-import shap
-from sklearn.linear_model import LinearRegression
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
-#from xgboost.sklearn import XGBRegressor
-from sklearn.preprocessing import OneHotEncoder, LabelEncoder
-from sklearn import tree
+from typing import Literal
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
+    from sklearn.metrics import accuracy_score, mean_squared_error
+    import shap
+    from xgboost.sklearn import XGBRegressor
+
     shap.initjs()
     xgb_model = XGBRegressor(n_estimators=1000, max_depth=10, learning_rate=0.001, random_state=0)
     xgb_model.fit(x_train, y_train)
@@ -31,6 +22,10 @@ def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_t
     print(acc)
 
 def fisher_score_show(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray):
+    from skfeature.function.similarity_based import fisher_score
+    from sklearn import svm
+    from sklearn.metrics import accuracy_score
+
     score = fisher_score.fisher_score(x_train, y_train)
     idx = fisher_score.feature_ranking(score)
     num_fea = 5
@@ -111,14 +106,18 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, column:list):
     from joblib import load
     df = signal_processing.read_sheets(psd_file, usecols=[0,1,2,3], combine=True)
     df = df.transpose()
+    df.rename(columns=float, inplace=True)
+    # add stats
+    df = signal_processing.calculate_spectral_stats(30,80,df)
+
     # add columns to describe the sensor channel and the sample_num
     df['channel'] = [name[7:] for name in df.index]
     df['sample_num'] = [name[:6] for name in df.index]
-    
+
     # select a particular channel and shuffle
     X_test = df.loc[df['channel'] == keyword]
     X_test = signal_processing.cast_column_to_str(X_test.drop(columns=['channel']), 1, labels=column)
-    X_test = X_test.iloc[:, :col]
+    X_test = pd.concat([X_test.iloc[:, :col], X_test.iloc[:, 129], X_test.iloc[:, 130]], axis=1)
     if X_test.isna().any().any():
         raise ValueError('nan values exist in the teat data.')
     
@@ -130,11 +129,131 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, column:list):
     print(joblib.split('/')[-1][:-7])
     print(res)
 
+def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str):
+    '''
+    load data of chosen format and filtered with keyword.
+
+    Parameters
+    ----------
+    format : psd spectrum saving format
+    dir : for excel file, the file name of the spectrum. And for parquet file, the directory.
+    keyword : the channel of sensor
+    '''
+    if format == 'excel':
+        df = signal_processing.read_sheets(filename=dir, combine=True, axis=0)
+        # add columns to describe the sensor channel and the sample_num
+        df['channel'] = [name[7:] for name in df['name']]
+        df['sample_num'] = [name[:6] for name in df['name']]
+        # select a particular channel and shuffle
+        df = df.loc[df['channel'] == keyword].drop(column='channel').sample(frac = 1).reset_index(drop=True)
+    
+    else:
+        # select a particular channel and shuffle
+        df = signal_processing.read_parquet_keyword(keyword, dir, 
+                                                parse_func=signal_processing.parse_digital).sample(frac=1).reset_index(drop=True)
+    if df.isna().any().any():
+        raise ValueError('nan values exist in the teat data.')
+    return df
+    
+    
+def preprocess_features(df:pd.DataFrame, col:int):
+    '''
+    preprocessing
+
+    Parameters
+    ----------
+    df : dataframe contains 'sample_num' 
+    col : preserved column number
+    '''
+    # add additional features such as mean and std of specific features
+    df = signal_processing.calculate_spectral_stats(30, 80, df)
+    # drop unused columns to reduce feature number
+    df = pd.concat([df.iloc[:, :col], df.iloc[:, -3:]], axis=1)
+    # transfer the column label into string before training
+    df = signal_processing.cast_column_to_str(df, 2)
+    return df
+
+def train_test_split(df:pd.DataFrame, test_samples: list):
+    '''
+    separate train and test set
+
+    Parameters
+    ----------
+    df : dataframe contains 'sample_num'
+    '''
+    X_train = df.loc[[x not in test_samples for x in df['sample_num']]]
+    X_test = df.loc[[x in test_samples for x in df['sample_num']]]
+
+    y_train = np.array([label_transfer(sample_num) for sample_num in X_train['sample_num']])
+    y_test = np.array([label_transfer(sample_num) for sample_num in X_test['sample_num']])
+
+    # encode categorical columns
+    y_train = pd.DataFrame(y_train, dtype="category")
+    y_test = pd.DataFrame(y_test, dtype="category")
+
+    # drop target
+    X_train = X_train.drop(columns='sample_num').reset_index(drop=True)
+    X_test = X_test.drop(columns='sample_num').reset_index(drop=True)
+    print('train shape:', X_train.shape)
+    print('test shape:', X_test.shape)
+    return X_train, X_test, y_train, y_test
+
+test_sample = {
+    'set1' : ['000027', '000048', '000053', '003735', '004073', '000785'],
+    'set2' : ['000030', '000050', '003735', '003861', '001833', '002577'],
+    'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
+}
+
+def label_transfer(sample_num: str):
+    '''
+    transfer sample number to label 0 and 1
+    '''
+    return 0 if signal_processing.class_label(sample_num) == 0 else 1
+
+
+def model_info():
+    '''
+    print structured model info for convenience pasting on table
+    reference: training data summery table
+    '''
+    pass
+
+def train_autosklearn_v1_model(X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1):
+    import autosklearn.classification
+    automlclassifierV1 = autosklearn.classification.AutoSklearnClassifier(
+        time_left_for_this_task=time_limit,
+        per_run_time_limit=per_run_limit,
+        resampling_strategy='cv',
+        resampling_strategy_arguments={'folds': 5},
+        memory_limit=None,
+        n_jobs=n_jobs
+    )
+    automlclassifierV1.fit(X_train, y_train)
+    # print score
+    print('automlclassifierV1 訓練集: ',automlclassifierV1.score(X_train,y_train))
+    print('automlclassifierV1 測試集: ',automlclassifierV1.score(X_test,y_test))
+    return automlclassifierV1
+    
+def train_autosklearn_v2_model(X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1):
+    from autosklearn.experimental.askl2 import AutoSklearn2Classifier
+
+    automlclassifierV2 = AutoSklearn2Classifier(
+        time_left_for_this_task=time_limit,
+        per_run_time_limit=per_run_limit,
+        memory_limit=None,
+        n_jobs=n_jobs
+    )
+    automlclassifierV2.fit(X_train, y_train)
+    # print score    
+    print('automlclassifierV2 訓練集: ',automlclassifierV2.score(X_train,y_train))
+    print('automlclassifierV2 測試集: ',automlclassifierV2.score(X_test,y_test))
+    return automlclassifierV2
+
+def save_model(automlclassifierV1, automlclassifierV2, path:str):
+    from joblib import dump
+    dump(automlclassifierV1, path + '_v1.joblib')
+    dump(automlclassifierV2, path + '_v2.joblib')
+
+
 if __name__ == '__main__':
-    X = signal_processing.read_parquet_keyword('lr_left', 
-                                           dir = '../../test_data//psd_100%//psd_window_high_resolution_100%//', 
-                                           parse_func=signal_processing.parse_digital).sample(frac=1).reset_index(drop=True)
-    channel = 'lr_left'
-    predict(psd_file='../../test_data//20250410_test_samples//psd_100%//psd_high_resolution.xlsx', 
-            joblib='../../model//100duty_high_resolution//%s_high_resolution_set1_1280_v1.joblib'%channel,
-            keyword=channel, col=1280, column=X.columns)
+    pass
