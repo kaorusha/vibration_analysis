@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import signal_processing
 from typing import Literal
+import time
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -156,7 +157,7 @@ def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str):
     return df
     
     
-def preprocess_features(df:pd.DataFrame, col:int):
+def preprocess_features(df:pd.DataFrame, col:int, stats:bool=False):
     '''
     preprocessing
 
@@ -164,11 +165,16 @@ def preprocess_features(df:pd.DataFrame, col:int):
     ----------
     df : dataframe contains 'sample_num' 
     col : preserved column number
+    stats : bool
+        whether to add additional features such as mean and std of specific features
     '''
     # add additional features such as mean and std of specific features
-    df = signal_processing.calculate_spectral_stats(30, 80, df)
-    # drop unused columns to reduce feature number
-    df = pd.concat([df.iloc[:, :col], df.iloc[:, -3:]], axis=1)
+    if stats:
+        df = signal_processing.calculate_spectral_stats(30, 80, df)
+        # drop unused columns to reduce feature number
+        df = pd.concat([df.iloc[:, :col], df.iloc[:, -3:]], axis=1)
+    else:
+        df = pd.concat([df.iloc[:, :col], df['sample_num']], axis=1)
     # transfer the column label into string before training
     df = signal_processing.cast_column_to_str(df, 2)
     return df
@@ -228,7 +234,10 @@ def train_autosklearn_v1_model(X_train, X_test, y_train, y_test, time_limit = 60
         memory_limit=None,
         n_jobs=n_jobs
     )
+    t1 = time.time()
     automlclassifierV1.fit(X_train, y_train)
+    t2 = time.time()
+    print(f'autosklearnV1 training time: {t2 - t1:.2f}')
     # print score
     print('automlclassifierV1 訓練集: ',automlclassifierV1.score(X_train,y_train))
     print('automlclassifierV1 測試集: ',automlclassifierV1.score(X_test,y_test))
@@ -243,7 +252,10 @@ def train_autosklearn_v2_model(X_train, X_test, y_train, y_test, time_limit = 60
         memory_limit=None,
         n_jobs=n_jobs
     )
+    t1 = time.time()
     automlclassifierV2.fit(X_train, y_train)
+    t2 = time.time()
+    print(f'autosklearnV2 training time: {t2 - t1:.2f}')
     # print score    
     print('automlclassifierV2 訓練集: ',automlclassifierV2.score(X_train,y_train))
     print('automlclassifierV2 測試集: ',automlclassifierV2.score(X_test,y_test))
@@ -255,5 +267,51 @@ def save_model(automlclassifierV1, automlclassifierV2, path:str):
     dump(automlclassifierV2, path + '_v2.joblib')
 
 
+def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, model_save_path:str=None, high_resolution:bool=False):
+    '''
+    train models with autosklearn v1 and v2
+
+    Parameters
+    ----------
+    dir : str
+        directory of the psd spectrum
+    channel : str
+        sensor channel
+    set_no : str
+        test sample set number
+    col : int
+        preserved column number
+    stats : bool
+        whether to add additional features such as mean and std of specific features
+    Examples
+    --------
+    >>> train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
+                channel=channel, set_no=set_no, col=400, stats=False, 
+                model_save_path='../../model//20duty_high_resolution//', high_resolution=True)
+    '''
+    df = load_data(format='parquet', dir=dir, keyword=channel)
+    df = preprocess_features(df, col=col, stats=stats)
+
+    if df.isna().any().any():
+        raise ValueError('nan values exist in the teat data.')
+    
+    X_train, X_test, y_train, y_test = train_test_split(df, test_samples=test_sample[set_no])
+    print(X_test.columns)
+    automlclassifierV1 = train_autosklearn_v1_model(X_train, X_test, y_train, y_test)
+    automlclassifierV2 = train_autosklearn_v2_model(X_train, X_test, y_train, y_test)
+    
+    if high_resolution:
+        model_save_path += channel + '_high_resolution_' + set_no + '_' + str(col)
+    else:
+        model_save_path += channel + set_no + '_' + str(col)
+    
+    save_model(automlclassifierV1, automlclassifierV2, path=model_save_path)
+    print('model saved at:', model_save_path)
+
 if __name__ == '__main__':
-    pass
+    channel = 'ud_up'
+    set_no = 'set1'
+    
+    train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
+                channel=channel, set_no=set_no, col=400, stats=False, 
+                model_save_path='../../model//20duty_high_resolution//', high_resolution=True)
