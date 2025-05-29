@@ -75,7 +75,14 @@ def compare_target_predict(df:pd.DataFrame, target:str, predict:str):
     axs.legend()
     plt.show()
 
-def predict(psd_file:str, joblib:str, keyword:str, col:int, stats:bool):
+# (Moved above to fix default argument error)
+def label_transfer(sample_num: str):
+    '''
+    transfer sample number to label 0 and 1
+    '''
+    return 0 if signal_processing.class_label(sample_num) == 0 else 1
+
+def predict(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, label_method = label_transfer):
     '''
     load psd spectrum, and load model, output the predict result
 
@@ -98,21 +105,58 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, stats:bool):
                     joblib='../../model//20duty_high_resolution//lr_left_high_resolution_set1_5121_v1.joblib',
                     keyword='lr_left', col=5121, stats=False)
     '''
-    from joblib import load
-    df = load_data(window=False, format='excel', dir=psd_file, keyword=keyword)
-    df = preprocess_features(df, col=col, stats=stats)
-    
-    if df.isna().any().any():
-        raise ValueError('nan values exist in the teat data.')
-    
     # 匯入模型
+    from joblib import load
+    from sklearn.metrics import classification_report
     clf = load(joblib)
-    # 模型預測測試
+    
+    df = load_data(window=False, format='excel', dir=psd_file, keyword=keyword)
+
     res = df['sample_num'].to_frame()
+    res['label'] = df['sample_num'].apply(label_method)
+
+    # 模型預測測試
+    t1 = time.time()
+    df = preprocess_features(df, col=col, stats=stats)
     res['predict'] = clf.predict(df.drop(columns=['sample_num']))
+    t2 = time.time()
+    total_inference_time_ms = (t2 - t1) * 1000
+    
     print(joblib.split('/')[-1][:-7])
     print(res)
+    print(classification_report(res['label'], res['predict']))
+    print(f'Total inference time: {total_inference_time_ms:.2f} ms')
+        
+def predict_single(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, label_method = label_transfer):
+    # 匯入模型
+    from joblib import load
+    from sklearn.metrics import classification_report
 
+    clf = load(joblib)
+    
+    df = load_data(window=False, format='excel', dir=psd_file, keyword=keyword)
+
+    total_samples = df['sample_num'].shape[0]
+    total_inference_time_ms = 0
+    res = df['sample_num'].to_frame()
+    res['label'] = df['sample_num'].apply(label_method)
+
+    for i in range(total_samples):
+        single_sample = df.iloc[i, :].to_frame().transpose()
+        # 模型預測測試
+        t1 = time.time()
+        single_sample = preprocess_features(single_sample, col=col, stats=stats)
+        target = clf.predict(single_sample.drop(columns=['sample_num']))
+        t2 = time.time()
+        total_inference_time_ms += (t2 - t1) * 1000
+        res.loc[i, 'predict'] = target
+    
+    print(joblib.split('/')[-1][:-7])
+    print(res)
+    print(classification_report(res['label'], res['predict']))
+    print(f'Total inference time: {total_inference_time_ms:.2f} ms')
+    print(f'Average inference time per sample: {total_inference_time_ms / total_samples:.2f} ms')
+    
 def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str, window:bool = True):
     '''
     load data of chosen format and filtered with keyword.
@@ -178,6 +222,9 @@ def preprocess_features(df:pd.DataFrame, col:int, stats:bool=False):
         df = pd.concat([df.iloc[:, :col], df['sample_num']], axis=1)
     # transfer the column label into string before training
     df = signal_processing.cast_column_to_str(df, 2)
+    if df.isna().any().any():
+        raise ValueError('nan values exist in the teat data.')
+        
     return df
 
 def train_test_split(df:pd.DataFrame, test_samples: list):
@@ -204,19 +251,6 @@ def train_test_split(df:pd.DataFrame, test_samples: list):
     print('train shape:', X_train.shape)
     print('test shape:', X_test.shape)
     return X_train, X_test, y_train, y_test
-
-test_sample = {
-    'set1' : ['000027', '000048', '000053', '003735', '004073', '000785'],
-    'set2' : ['000030', '000050', '003735', '003861', '001833', '002577'],
-    'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
-}
-
-def label_transfer(sample_num: str):
-    '''
-    transfer sample number to label 0 and 1
-    '''
-    return 0 if signal_processing.class_label(sample_num) == 0 else 1
-
 
 def model_info():
     '''
@@ -314,6 +348,12 @@ if __name__ == '__main__':
     col = 5121
     set_no = 'set1'
     joblib = '../../model//20duty_high_resolution//%s_high_resolution_%s_%d_v1.joblib'%(keyword, set_no, col)
-    predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx', stats=False,
-            joblib=joblib, keyword=keyword, col=col)
+    def label(sample_num: str):
+        if sample_num in ['a00053', 'a03720', 'a04802', 'a01833']:
+            return 1
+        else:
+            return 0
+    
+    predict_single(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx', stats=False,
+            joblib=joblib, keyword=keyword, col=col, label_method=label)
     
