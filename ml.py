@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import signal_processing
 from typing import Literal
 import time
+from joblib import load
+from sklearn.metrics import classification_report
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -106,8 +108,6 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, label_me
                     keyword='lr_left', col=5121, stats=False)
     '''
     # 匯入模型
-    from joblib import load
-    from sklearn.metrics import classification_report
     clf = load(joblib)
     
     df = load_data(window=False, format='excel', dir=psd_file, keyword=keyword)
@@ -129,9 +129,6 @@ def predict(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, label_me
         
 def predict_single(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, label_method = label_transfer):
     # 匯入模型
-    from joblib import load
-    from sklearn.metrics import classification_report
-
     clf = load(joblib)
     
     df = load_data(window=False, format='excel', dir=psd_file, keyword=keyword)
@@ -252,14 +249,39 @@ def train_test_split(df:pd.DataFrame, test_samples: list):
     print('test shape:', X_test.shape)
     return X_train, X_test, y_train, y_test
 
-def model_info():
+def model_info(model_file_name: str):
     '''
-    print structured model info for convenience pasting on table
+    load a trained model and print model info
+    '''
+    model = load(model_file_name)
+    
+    df = model.leaderboard(detailed = True, ensemble_only=True)
+    print(df)
+    # detail of the model
+    best_model_info = model.show_models()
+    print(best_model_info)
+    model.sprint_statistics()
+    
+def model_training_log(model, model_file_name: str, X_train:pd.DataFrame, y_train:pd.DataFrame, X_test:pd.DataFrame, y_test:pd.DataFrame,
+                       actual_training_time:float = 0.0, channel:str = 'unknown', ):
+    '''
+    print model training log for convenience pasting on table
     reference: training data summery table
     '''
-    pass
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    train_report_dict = classification_report(y_train, model.predict(X_train), output_dict=True)
+    test_report_dict = classification_report(y_test, model.predict(X_test), output_dict=True)
 
-def train_autosklearn_v1_model(X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1):
+
+    print(
+        f"{timestamp} | {model_file_name} | {model.__class__.__name__} | {model} | {actual_training_time:.2f} | | | | |"
+        f"{channel}| | {train_report_dict['accuracy']:.4f} |  | {test_report_dict['accuracy']:.4f} | "
+        f"{test_report_dict['weighted avg']['precision']:.4f} | {test_report_dict['weighted avg']['recall']:.4f} | "
+        f"{test_report_dict['weighted avg']['f1-score']:.4f} "
+    )
+    
+
+def train_autosklearn_v1_model(model_path:str, channel:str, X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
     import autosklearn.classification
     automlclassifierV1 = autosklearn.classification.AutoSklearnClassifier(
         time_left_for_this_task=time_limit,
@@ -267,18 +289,17 @@ def train_autosklearn_v1_model(X_train, X_test, y_train, y_test, time_limit = 60
         resampling_strategy='cv',
         resampling_strategy_arguments={'folds': 5},
         memory_limit=None,
-        n_jobs=n_jobs
+        n_jobs=n_jobs,
+        **kwargs
     )
     t1 = time.time()
     automlclassifierV1.fit(X_train, y_train)
     t2 = time.time()
-    print(f'autosklearnV1 training time: {t2 - t1:.2f}')
-    # print score
-    print('automlclassifierV1 訓練集: ',automlclassifierV1.score(X_train,y_train))
-    print('automlclassifierV1 測試集: ',automlclassifierV1.score(X_test,y_test))
-    return automlclassifierV1
+    # print log
+    model_training_log(automlclassifierV1, model_path.split('/')[-1], X_train, y_train, X_test, y_test, actual_training_time=t2-t1, channel=channel)
+    save_model(automlclassifierV1, model_path)
     
-def train_autosklearn_v2_model(X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1):
+def train_autosklearn_v2_model(model_path:str, channel:str, X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
     from autosklearn.experimental.askl2 import AutoSklearn2Classifier
 
     automlclassifierV2 = AutoSklearn2Classifier(
@@ -290,39 +311,45 @@ def train_autosklearn_v2_model(X_train, X_test, y_train, y_test, time_limit = 60
     t1 = time.time()
     automlclassifierV2.fit(X_train, y_train)
     t2 = time.time()
-    print(f'autosklearnV2 training time: {t2 - t1:.2f}')
-    # print score    
-    print('automlclassifierV2 訓練集: ',automlclassifierV2.score(X_train,y_train))
-    print('automlclassifierV2 測試集: ',automlclassifierV2.score(X_test,y_test))
-    return automlclassifierV2
-
-def save_model(automlclassifierV1, automlclassifierV2, path:str):
+    # print log
+    model_training_log(automlclassifierV2, model_path.split('/')[-1], X_train, y_train, X_test, y_test, actual_training_time=t2-t1, channel=channel)
+    save_model(automlclassifierV2, model_path)
+    
+def save_model(trained_model, path:str):
     from joblib import dump
-    dump(automlclassifierV1, path + '_v1.joblib')
-    dump(automlclassifierV2, path + '_v2.joblib')
+    dump(trained_model, path)
+    print('model saved at:', path)
 
+test_sample = {
+    'set1' : ['000027', '000048', '000053', '003735', '004073', '000785'],
+    'set2' : ['000030', '000050', '003735', '003861', '001833', '002577'],
+    'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
+}
 
 def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, model_save_path:str=None, high_resolution:bool=False):
     '''
     train models with autosklearn v1 and v2
 
-    Parameters
-    ----------
-    dir : str
-        directory of the psd spectrum
-    channel : str
-        sensor channel
-    set_no : str
-        test sample set number
-    col : int
-        preserved column number
-    stats : bool
-        whether to add additional features such as mean and std of specific features
-    Examples
-    --------
-    >>> train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
-                channel=channel, set_no=set_no, col=400, stats=False, 
-                model_save_path='../../model//20duty_high_resolution//', high_resolution=True)
+    Args:
+        dir (str): 
+            directory of the psd spectrum data, which is in parquet format.
+        channel (str):
+            the sensor channel to be trained, such as 'lr_left', 'ud_axial', etc.
+        set_no (str):
+            the set number of the training data, such as 'set1', 'set2', etc.
+        col (int):
+            the number of features to be preserved, which is the number of columns in the psd spectrum.
+        stats (bool):
+            whether to add additional features such as mean and std of specific features.
+            If True, the feature number will be increased by 2.
+        model_save_path (str):
+            the path to save the trained model. If None, the model will be saved at local directory.
+        high_resolution (bool):
+            whether the psd spectrum is high resolution, which will affect the model file name.
+    Examples:
+        >>> train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
+                    channel=channel, set_no=set_no, col=400, stats=False, 
+                    model_save_path='../../model//20duty_high_resolution//', high_resolution=True)
     '''
     df = load_data(format='parquet', dir=dir, keyword=channel)
     df = preprocess_features(df, col=col, stats=stats)
@@ -332,28 +359,18 @@ def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, mo
     
     X_train, X_test, y_train, y_test = train_test_split(df, test_samples=test_sample[set_no])
     print(X_test.columns)
-    automlclassifierV1 = train_autosklearn_v1_model(X_train, X_test, y_train, y_test)
-    automlclassifierV2 = train_autosklearn_v2_model(X_train, X_test, y_train, y_test)
     
     if high_resolution:
         model_save_path += channel + '_high_resolution_' + set_no + '_' + str(col)
     else:
         model_save_path += channel + set_no + '_' + str(col)
     
-    save_model(automlclassifierV1, automlclassifierV2, path=model_save_path)
-    print('model saved at:', model_save_path)
-
+    train_autosklearn_v1_model(model_save_path, channel,  X_train, X_test, y_train, y_test)
+    train_autosklearn_v2_model(model_save_path, channel, X_train, X_test, y_train, y_test)
+    
 if __name__ == '__main__':
-    keyword = 'lr_left'
+    keyword = 'ud_axial'
+    set_no = 'set3'
     col = 5121
-    set_no = 'set1'
-    joblib = '../../model//20duty_high_resolution//%s_high_resolution_%s_%d_v1.joblib'%(keyword, set_no, col)
-    def label(sample_num: str):
-        if sample_num in ['a00053', 'a03720', 'a04802', 'a01833']:
-            return 1
-        else:
-            return 0
-    
-    predict_single(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx', stats=False,
-            joblib=joblib, keyword=keyword, col=col, label_method=label)
-    
+    version = 'v2'
+    joblib = '../../model//20duty_high_resolution//%s_high_resolution_%s_%d_%s.joblib'%(keyword, set_no, col, version)
