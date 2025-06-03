@@ -250,18 +250,30 @@ def train_test_split(df:pd.DataFrame, test_samples: list):
     print('test shape:', X_test.shape)
     return X_train, X_test, y_train, y_test
 
-def model_info(model_file_name: str):
+def model_info(model_file_name: str, leaderboard:bool = True, show_models:bool = True, sprint_statistics:bool = True):
     '''
     load a trained model and print model info
+    Args:
+        model_file_name (str): 
+            the file name of the trained model, which is a joblib file.
+        leaderboard (bool):
+            whether to print the leaderboard of the model.
+        show_models (bool): 
+            whether to show the models in detail.
+        sprint_stats (bool): 
+            whether to print the sprint statistics of the model.
     '''
     model = load(model_file_name)
     
-    df = model.leaderboard(detailed = True, ensemble_only=True)
-    print(df)
+    if leaderboard:
+        df = model.leaderboard(detailed = True, ensemble_only=True)
+        print(df)
     # detail of the model
-    best_model_info = model.show_models()
-    print(best_model_info)
-    model.sprint_statistics()
+    if show_models:
+        best_model_info = model.show_models()
+        print(best_model_info)
+    if sprint_statistics:
+        print(model.sprint_statistics())
     
 def model_training_log(model, model_file_name: str, X_train:pd.DataFrame, y_train:pd.DataFrame, X_test:pd.DataFrame, y_test:pd.DataFrame,
                        actual_training_time:float = 0.0, channel:str = 'unknown', ):
@@ -307,7 +319,8 @@ def train_autosklearn_v2_model(model_path:str, channel:str, X_train, X_test, y_t
         time_left_for_this_task=time_limit,
         per_run_time_limit=per_run_limit,
         memory_limit=None,
-        n_jobs=n_jobs
+        n_jobs=n_jobs,
+        **kwargs
     )
     t1 = time.time()
     automlclassifierV2.fit(X_train, y_train)
@@ -393,6 +406,6 @@ if __name__ == '__main__':
     # predict the test samples with the trained models
     for version in versions:
         joblib = dir_model + '%s_high_resolution_%s_%d_%s.joblib'%(keyword, set_no, col, version)
-        
+        model_info(joblib, show_models=False)
         predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx',
                 joblib=joblib, keyword=keyword, col=col, stats=False, label_method=label_test)
