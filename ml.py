@@ -6,6 +6,7 @@ from typing import Literal
 import time
 from joblib import load
 from sklearn.metrics import classification_report
+import autosklearn.metrics
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -274,7 +275,7 @@ def model_training_log(model, model_file_name: str, X_train:pd.DataFrame, y_trai
 
 
     print(
-        f"{timestamp} | {model_file_name} | {model.__class__.__name__} | {model} | {actual_training_time:.2f} | | | | |"
+        f"{timestamp} | {model_file_name} | {model.__class__.__name__} | {model} | {actual_training_time:.2f} | | | |"
         f"{channel}| | {train_report_dict['accuracy']:.4f} |  | {test_report_dict['accuracy']:.4f} | "
         f"{test_report_dict['weighted avg']['precision']:.4f} | {test_report_dict['weighted avg']['recall']:.4f} | "
         f"{test_report_dict['weighted avg']['f1-score']:.4f} "
@@ -326,7 +327,7 @@ test_sample = {
     'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
 }
 
-def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, model_save_path:str=None, high_resolution:bool=False):
+def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, model_save_path:str=None, high_resolution:bool=False, **kwargs):
     '''
     train models with autosklearn v1 and v2
 
@@ -349,7 +350,9 @@ def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, mo
     Examples:
         >>> train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
                     channel=channel, set_no=set_no, col=400, stats=False, 
-                    model_save_path='../../model//20duty_high_resolution//', high_resolution=True)
+                    model_save_path='../../model//20duty_high_resolution//', high_resolution=True,
+                    ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, metric=autosklearn.metrics.f1_weighted
+                    )
     '''
     df = load_data(format='parquet', dir=dir, keyword=channel)
     df = preprocess_features(df, col=col, stats=stats)
@@ -365,12 +368,31 @@ def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, mo
     else:
         model_save_path += channel + set_no + '_' + str(col)
     
-    train_autosklearn_v1_model(model_save_path, channel,  X_train, X_test, y_train, y_test)
-    train_autosklearn_v2_model(model_save_path, channel, X_train, X_test, y_train, y_test)
+    train_autosklearn_v1_model(model_save_path + '_v1.joblib', channel,  X_train, X_test, y_train, y_test, **kwargs)
+    train_autosklearn_v2_model(model_save_path + '_v2.joblib', channel, X_train, X_test, y_train, y_test, **kwargs)
     
 if __name__ == '__main__':
-    keyword = 'ud_axial'
-    set_no = 'set3'
-    col = 5121
-    version = 'v2'
-    joblib = '../../model//20duty_high_resolution//%s_high_resolution_%s_%d_%s.joblib'%(keyword, set_no, col, version)
+    keyword = 'lr_left'
+    set_no = 'set1'
+    col = 400
+    dir_model = '../../model//20duty_high_resolution_5ensemble//'
+    
+    # train models with autosklearn v1 and v2
+    train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//',
+                  channel=keyword, set_no=set_no, col=col, stats=False, 
+                  model_save_path=dir_model, high_resolution=True, 
+                  ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, metric=autosklearn.metrics.f1_weighted)
+    
+    def label_test(sample_num: str):
+        if sample_num in ['a00053', 'a03720', 'a04802', 'a01833']:
+            return 1
+        else:
+            return 0
+    
+    versions = ['v1', 'v2']
+    # predict the test samples with the trained models
+    for version in versions:
+        joblib = dir_model + '%s_high_resolution_%s_%d_%s.joblib'%(keyword, set_no, col, version)
+        
+        predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx',
+                joblib=joblib, keyword=keyword, col=col, stats=False, label_method=label_test)
