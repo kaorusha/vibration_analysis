@@ -6,7 +6,7 @@ from typing import Literal
 import time
 from joblib import load
 from sklearn.metrics import classification_report
-import autosklearn.metrics
+import autosklearn.metrics as metrics
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -276,25 +276,88 @@ def model_info(model_file_name: str, leaderboard:bool = True, show_models:bool =
         print(model.sprint_statistics())
     
 def model_training_log(model, model_file_name: str, X_train:pd.DataFrame, y_train:pd.DataFrame, X_test:pd.DataFrame, y_test:pd.DataFrame,
-                       actual_training_time:float = 0.0, channel:str = 'unknown', ):
+                       actual_training_time:float, dataset_name:str, train_test_split:int, channel:str):
     '''
     print model training log for convenience pasting on table
     reference: training data summery table
+    Args:
+        model: 
+            the trained model, which is returned by fit().
+        model_file_name (str): 
+            the file name of the trained model, which is a joblib file.
+        X_train (pd.DataFrame): 
+            the training data features.
+        y_train (pd.DataFrame): 
+            the training data labels.
+        X_test (pd.DataFrame): 
+            the test data features.
+        y_test (pd.DataFrame): 
+            the test data labels.
+        actual_training_time (float): 
+            the actual training time of the model in seconds.
+        dataset_name (str): 
+            the name of the dataset, which will be used in the model training log and fit().
+            the format is 'dataset_id,preprocessing_id', such as 'DS_L_01,PP_HR_400'.
+        train_test_split (int): 
+            the set number of the training data, such as 1, 2, etc.
+        channel (str): 
+            the sensor channel to be trained, such as 'lr_left', 'ud_axial', etc.
     '''
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
     train_report_dict = classification_report(y_train, model.predict(X_train), output_dict=True)
     test_report_dict = classification_report(y_test, model.predict(X_test), output_dict=True)
-
+    dataset_id = dataset_name.split(',')[0] if dataset_name else 'unknown'
+    preprocessing_id = dataset_name.split(',')[1] if len(dataset_name.split(',')) > 1 else 'unknown'
 
     print(
-        f"{timestamp} | {model_file_name} | {model.__class__.__name__} | {model} | {actual_training_time:.2f} | | | |"
+        f"{timestamp} | {model_file_name} | {model.__class__.__name__} | {model} | {actual_training_time:.2f} |"
+        f"{dataset_id} | {preprocessing_id} | {train_test_split} |"
         f"{channel}| | {train_report_dict['accuracy']:.4f} |  | {test_report_dict['accuracy']:.4f} | "
         f"{test_report_dict['weighted avg']['precision']:.4f} | {test_report_dict['weighted avg']['recall']:.4f} | "
         f"{test_report_dict['weighted avg']['f1-score']:.4f} "
     )
     
 
-def train_autosklearn_v1_model(model_path:str, channel:str, X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
+def train_autosklearn_v1_model(dataset_name:str, model_path:str, set_no:int, channel:str, 
+                               X_train, X_test, y_train, y_test, 
+                               time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
+    '''
+    Trains an AutoSklearnClassifier model with specific optimization and ensemble settings.
+    
+    Args:
+        dataset_name (str): 
+            the name of the dataset, which will be used in the model training log and fit().
+        model_path (str): 
+            the path to save the trained model.
+        set_no (int):
+            the set number of the training data, such as 1, 2, etc.
+        channel (str): 
+            the sensor channel to be trained, such as 'lr_left', 'ud_axial', etc.
+        X_train (pd.DataFrame): 
+            the training data features.
+        X_test (pd.DataFrame): 
+            the test data features.
+        y_train (pd.DataFrame): 
+            the training data labels.
+        y_test (pd.DataFrame): 
+            the test data labels.
+        time_limit (int): 
+            the total time limit for the model training in seconds. Default is 600 seconds.
+        per_run_limit (int): 
+            the time limit for each model training run in seconds. Default is 200 seconds.
+        n_jobs (int): 
+            the number of jobs to run in parallel. Default is -1, which means using all available cores.
+        **kwargs:
+            additional keyword arguments to be passed to the AutoSklearnClassifier.
+    Returns:
+        None
+    Examples:
+        >>> train_autosklearn_v1_model(dataset_name='DS_L_01,PP_HR_400', model_path='model_v1.joblib', set_no=1, channel='lr_left',
+                                      X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test,
+                                      time_limit=600, per_run_limit=200, n_jobs=-1, 
+                                      ensemble_kwargs={'ensemble_size': 5}, ensemble_nbest=10, 
+                                      metric=metrics.CLASSIFICATION_METRICS['f1_weighted'])
+    '''
     import autosklearn.classification
     automlclassifierV1 = autosklearn.classification.AutoSklearnClassifier(
         time_left_for_this_task=time_limit,
@@ -306,13 +369,64 @@ def train_autosklearn_v1_model(model_path:str, channel:str, X_train, X_test, y_t
         **kwargs
     )
     t1 = time.time()
-    automlclassifierV1.fit(X_train, y_train)
+    automlclassifierV1.fit(X_train, y_train, dataset_name=dataset_name)
     t2 = time.time()
     # print log
-    model_training_log(automlclassifierV1, model_path.split('/')[-1], X_train, y_train, X_test, y_test, actual_training_time=t2-t1, channel=channel)
+    model_training_log(automlclassifierV1, model_path.split('/')[-1], 
+                       X_train, y_train, X_test, y_test, 
+                       actual_training_time=t2-t1, dataset_name=dataset_name, train_test_split=set_no,channel=channel)
     save_model(automlclassifierV1, model_path)
     
-def train_autosklearn_v2_model(model_path:str, channel:str, X_train, X_test, y_train, y_test, time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
+def train_autosklearn_v2_model(dataset_name:str, model_path:str, set_no:int, channel:str, 
+                               X_train, X_test, y_train, y_test, 
+                               time_limit = 600, per_run_limit = 200, n_jobs = -1, **kwargs):
+    '''
+    Trains an AutoSklearn2Classifier model with specific optimization and ensemble settings.
+    
+    Note:
+
+    Due to a [known bug](https://github.com/automl/auto-sklearn/issues/1654) in auto-sklearn v0.15.0 
+    preventing direct optimization with f1_weighted or f1_macro metrics, the model's primary optimization
+    goal (AutoML search process) is set to 'accuracy' by default by leaving `metric` argument as default.
+
+    However, the ensemble building phase explicitly incorporates 'f1_weighted'
+    via `ensemble_kwargs`. This ensures that while the overall model selection
+    is accuracy-driven, the final ensemble's sub-model weighting prioritizes
+    f1_weighted performance, providing a degree of f1-score orientation.
+    Args:
+        dataset_name (str): 
+            the name of the dataset, which will be used in the model training log and fit().
+        model_path (str): 
+            the path to save the trained model.
+        set_no (int):
+            the set number of the training data, such as 1, 2, etc.
+        channel (str): 
+            the sensor channel to be trained, such as 'lr_left', 'ud_axial', etc.
+        X_train (pd.DataFrame): 
+            the training data features.
+        X_test (pd.DataFrame): 
+            the test data features.
+        y_train (pd.DataFrame): 
+            the training data labels.
+        y_test (pd.DataFrame): 
+            the test data labels.
+        time_limit (int): 
+            the total time limit for the model training in seconds. Default is 600 seconds.
+        per_run_limit (int): 
+            the time limit for each model training run in seconds. Default is 200 seconds.
+        n_jobs (int): 
+            the number of jobs to run in parallel. Default is -1, which means using all available cores.
+        **kwargs:
+            additional keyword arguments to be passed to the AutoSklearn2Classifier.
+    Returns:
+        None
+    Examples:
+        >>> train_autosklearn_v2_model(dataset_name='DS_L_01,PP_HR_400', model_path='model_v2.joblib', set_no=1, channel='lr_left',
+                                      X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test,
+                                      time_limit=600, per_run_limit=200, n_jobs=-1, 
+                                      ensemble_kwargs={'ensemble_size': 5, 'metrics': metrics.CLASSIFICATION_METRICS['f1_weighted']},
+                                      ensemble_nbest=10)
+    '''
     from autosklearn.experimental.askl2 import AutoSklearn2Classifier
 
     automlclassifierV2 = AutoSklearn2Classifier(
@@ -323,10 +437,12 @@ def train_autosklearn_v2_model(model_path:str, channel:str, X_train, X_test, y_t
         **kwargs
     )
     t1 = time.time()
-    automlclassifierV2.fit(X_train, y_train)
+    automlclassifierV2.fit(X_train, y_train, dataset_name = dataset_name)
     t2 = time.time()
     # print log
-    model_training_log(automlclassifierV2, model_path.split('/')[-1], X_train, y_train, X_test, y_test, actual_training_time=t2-t1, channel=channel)
+    model_training_log(automlclassifierV2, model_path.split('/')[-1], 
+                       X_train, y_train, X_test, y_test, 
+                       actual_training_time=t2-t1, dataset_name=dataset_name, train_test_split=set_no, channel=channel)
     save_model(automlclassifierV2, model_path)
     
 def save_model(trained_model, path:str):
@@ -340,11 +456,13 @@ test_sample = {
     'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
 }
 
-def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, model_save_path:str=None, high_resolution:bool=False, **kwargs):
+def train_models(dataset_name:str, dir:str, channel:str, set_no:int, col:int, stats:bool=False, model_save_path:str='', high_resolution:bool=False):
     '''
     train models with autosklearn v1 and v2
 
     Args:
+        dataset_name (str): 
+            the name of the dataset, which will be used in the model training log and fit().
         dir (str): 
             directory of the psd spectrum data, which is in parquet format.
         channel (str):
@@ -361,7 +479,7 @@ def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, mo
         high_resolution (bool):
             whether the psd spectrum is high resolution, which will affect the model file name.
     Examples:
-        >>> train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
+        >>> train_models(dataset_name='DS_L_01,PP_HR_400', dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
                     channel=channel, set_no=set_no, col=400, stats=False, 
                     model_save_path='../../model//20duty_high_resolution//', high_resolution=True,
                     ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, metric=autosklearn.metrics.f1_weighted
@@ -373,29 +491,32 @@ def train_models(dir:str, channel:str, set_no:str, col:int, stats:bool=False, mo
     if df.isna().any().any():
         raise ValueError('nan values exist in the teat data.')
     
-    X_train, X_test, y_train, y_test = train_test_split(df, test_samples=test_sample[set_no])
+    X_train, X_test, y_train, y_test = train_test_split(df, test_samples=test_sample['set%d'%set_no])
     print(X_test.columns)
     
     if high_resolution:
-        model_save_path += channel + '_high_resolution_' + set_no + '_' + str(col)
+        model_save_path += channel + '_high_resolution_' + 'set' + str(set_no) + '_' + str(col)
     else:
-        model_save_path += channel + set_no + '_' + str(col)
+        model_save_path += channel + '_set' + str(set_no) + '_' + str(col)
     
-    train_autosklearn_v1_model(model_save_path + '_v1.joblib', channel,  X_train, X_test, y_train, y_test, **kwargs)
-    train_autosklearn_v2_model(model_save_path + '_v2.joblib', channel, X_train, X_test, y_train, y_test, **kwargs)
+    train_autosklearn_v1_model(dataset_name, model_save_path + '_v1.joblib', set_no, channel,  X_train, X_test, y_train, y_test, 
+                               ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, 
+                               metric=metrics.CLASSIFICATION_METRICS['f1_weighted'])
+    # use default metric for autosklearn v2, because f1_weighted is not supported in autosklearn v2
+    train_autosklearn_v2_model(dataset_name, model_save_path + '_v2.joblib', set_no, channel, X_train, X_test, y_train, y_test,
+                               ensemble_kwargs = {'ensemble_size': 5, 'metrics': metrics.CLASSIFICATION_METRICS['f1_weighted']},
+                               ensemble_nbest=10)
     
 if __name__ == '__main__':
     keyword = 'lr_left'
-    set_no = 'set1'
+    set_no = 3
     col = 400
     dir_model = '../../model//20duty_high_resolution_5ensemble//'
     
     # train models with autosklearn v1 and v2
-    train_models(dir='../../test_data//psd_20%//psd_window_high_resolution_20%//',
-                  channel=keyword, set_no=set_no, col=col, stats=False, 
-                  model_save_path=dir_model, high_resolution=True, 
-                  ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, metric=autosklearn.metrics.f1_weighted)
-    
+    train_models(dataset_name='DS_L_01,PP_HR_%d'%col,dir='../../test_data//psd_20%//psd_window_high_resolution_20%//',
+                  channel=keyword, set_no=set_no, col=col, stats=False, model_save_path=dir_model, high_resolution=True)
+
     def label_test(sample_num: str):
         if sample_num in ['a00053', 'a03720', 'a04802', 'a01833']:
             return 1
@@ -405,7 +526,7 @@ if __name__ == '__main__':
     versions = ['v1', 'v2']
     # predict the test samples with the trained models
     for version in versions:
-        joblib = dir_model + '%s_high_resolution_%s_%d_%s.joblib'%(keyword, set_no, col, version)
+        joblib = dir_model + '%s_high_resolution_set%d_%d_%s.joblib'%(keyword, set_no, col, version)
         model_info(joblib, show_models=False)
         predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx',
                 joblib=joblib, keyword=keyword, col=col, stats=False, label_method=label_test)
