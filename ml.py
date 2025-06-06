@@ -456,7 +456,8 @@ test_sample = {
     'set3' : ['000030', '000039', '000052', '004072', '004073', '004802']
 }
 
-def train_models(dataset_name:str, dir:str, channel:str, set_no:int, col:int, stats:bool=False, model_save_path:str='', high_resolution:bool=False):
+def train_models(dataset_name:str, dir:str, format:Literal['excel', 'parquet'],
+                 channel:str, set_no:int, col:int, stats:bool=False, model_save_path:str='', high_resolution:bool=False):
     '''
     train models with autosklearn v1 and v2
 
@@ -480,12 +481,13 @@ def train_models(dataset_name:str, dir:str, channel:str, set_no:int, col:int, st
             whether the psd spectrum is high resolution, which will affect the model file name.
     Examples:
         >>> train_models(dataset_name='DS_L_01,PP_HR_400', dir='../../test_data//psd_20%//psd_window_high_resolution_20%//', 
+                    format='parquet',
                     channel=channel, set_no=set_no, col=400, stats=False, 
                     model_save_path='../../model//20duty_high_resolution//', high_resolution=True,
                     ensemble_kwargs = {'ensemble_size': 5}, ensemble_nbest=10, metric=autosklearn.metrics.f1_weighted
                     )
     '''
-    df = load_data(format='parquet', dir=dir, keyword=channel)
+    df = load_data(format=format, dir=dir, keyword=channel)
     df = preprocess_features(df, col=col, stats=stats)
 
     if df.isna().any().any():
@@ -509,13 +511,14 @@ def train_models(dataset_name:str, dir:str, channel:str, set_no:int, col:int, st
     
 if __name__ == '__main__':
     keyword = 'lr_left'
-    set_no = 3
-    col = 400
-    dir_model = '../../model//20duty_high_resolution_5ensemble//'
+    set_no = 1
+    col = 512
+    dir_model = '../../model//20duty_5ensemble//'
     
     # train models with autosklearn v1 and v2
-    train_models(dataset_name='DS_L_01,PP_HR_%d'%col,dir='../../test_data//psd_20%//psd_window_high_resolution_20%//',
-                  channel=keyword, set_no=set_no, col=col, stats=False, model_save_path=dir_model, high_resolution=True)
+    train_models(dataset_name='DS_L_01,PP_LR_%d'%col,dir='../../test_data//psd_20%//psd_window.xlsx',
+                  format='excel',
+                  channel=keyword, set_no=set_no, col=col, stats=False, model_save_path=dir_model, high_resolution=False)
 
     def label_test(sample_num: str):
         if sample_num in ['a00053', 'a03720', 'a04802', 'a01833']:
@@ -526,7 +529,7 @@ if __name__ == '__main__':
     versions = ['v1', 'v2']
     # predict the test samples with the trained models
     for version in versions:
-        joblib = dir_model + '%s_high_resolution_set%d_%d_%s.joblib'%(keyword, set_no, col, version)
+        joblib = dir_model + '%s_set%d_%d_%s.joblib'%(keyword, set_no, col, version)
         model_info(joblib, show_models=False)
-        predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd_high_resolution.xlsx',
+        predict(psd_file='../../test_data//20250410_test_samples//psd_20%//psd.xlsx',
                 joblib=joblib, keyword=keyword, col=col, stats=False, label_method=label_test)
