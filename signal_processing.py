@@ -574,6 +574,9 @@ def acc_processing_raw(
     >>>     acc_processing_raw(dir='../../test_data//20240911_good_samples//acc_data_20%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
                          domain='order', nfft=10240, cols=3, average='mean', psd_result_filename='../../test_data//20250331_test//psd.xlsx',
                          estimated_frame_len=int(51200/44), resample_len=1024, NumRotations=10)
+    >>>     acc_processing_raw(dir='../../test_data//20250613_test_samples//acc_data_100%//', analysis_mask=0b0100, fs=256, nperseg=int(51200/300), noverlap=10,
+                         domain='order', nfft=2560, cols=3, average='mean', psd_result_filename='../../test_data//20250613_test_samples//psd_100%_high_resolution.xlsx',
+                         estimated_frame_len=int(51200/300), resample_len=256, NumRotations=10)
     """
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
