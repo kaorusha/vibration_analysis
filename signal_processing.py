@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import scipy.spatial
 import os
 import seaborn as sns
+import time
 
 color = {
     'blue': (0, 0.4470, 0.7410),
@@ -530,7 +531,7 @@ def read_acc_file(path:str, usecols:list = None):
     if path.endswith('.xlsx'):
         return pd.read_excel(io=path, header=0, usecols=usecols)
 
-def acc_processing_excel(
+def acc_processing_raw(
         dir:str,
         analysis_mask: int,
         comparing_sample_lr: str = '',
@@ -561,16 +562,16 @@ def acc_processing_excel(
     
     Examples
     --------
-    >>>    acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b1000, fs=1024, nperseg=int(51200/44), noverlap=10,
+    >>>    acc_processing_raw(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b1000, fs=1024, nperseg=int(51200/44), noverlap=10,
                          domain='order', nfft=1024, cols=3, 
                          comparing_sample_lr='../../test_data//Defective_products_on_line_20%//acc_data//000045_lr.xlsx',
                          comparing_sample_ud='../../test_data//Defective_products_on_line_20%//acc_data//000045_ud.xlsx'
                          )
-    >>>     acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+    >>>     acc_processing_raw(dir='../../test_data//20240911_good_samples//acc_data//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
                          domain='order', nfft=1024, cols=3, average='None', psd_result_filename='psd_window.xlsx')
-    >>>     acc_processing_excel(dir= dir + 'acc_data_100%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/300), noverlap=10,
+    >>>     acc_processing_raw(dir= dir + 'acc_data_100%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/300), noverlap=10,
                          domain='order', nfft=1024, cols=3, average='None', psd_result_filename= dir + 'psd_window.parquet', file_export_func = to_parquet)
-    >>>     acc_processing_excel(dir='../../test_data//20240911_good_samples//acc_data_20%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
+    >>>     acc_processing_raw(dir='../../test_data//20240911_good_samples//acc_data_20%//', analysis_mask=0b0100, fs=1024, nperseg=int(51200/44), noverlap=10,
                          domain='order', nfft=10240, cols=3, average='mean', psd_result_filename='../../test_data//20250331_test//psd.xlsx',
                          estimated_frame_len=int(51200/44), resample_len=1024, NumRotations=10)
     """
@@ -580,8 +581,12 @@ def acc_processing_excel(
     comparing_sample_lr_df = read_acc_file(comparing_sample_lr, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
     comparing_sample_ud_df = read_acc_file(comparing_sample_ud, usecols=usecols) if analysis_mask & 0b1000 else pd.DataFrame()
 
+    total_time_ms = 0
+    total_samples = 0
     for file_name in os.listdir(dir):
         if file_name.endswith('.xlsx') or file_name.endswith('parquet') or file_name.endswith('parquet.gzip'):
+            total_samples += 1
+            t1 = time.time()
             df = read_acc_file(dir+file_name, usecols=usecols)
             print("read %s"%file_name)
             acc_processing_df(df = df, analysis_mask=analysis_mask, sheet_name=file_name[:-5],
@@ -589,7 +594,10 @@ def acc_processing_excel(
                               coherence_compare_df=comparing_sample_lr_df if 'lr' in file_name else comparing_sample_ud_df,
                               fft_result_filename=fft_result_filename, psd_result_filename=psd_result_filename,
                               Cxy_result_filename=Cxy_result_filename, **arg)
-    
+            t2 = time.time()
+            total_time_ms += (t2 - t1) * 1000  # convert to milliseconds
+    if total_samples > 0:
+        print(f'Average preprocessing time per sample: {total_time_ms / total_samples:.2f} ms')
     if analysis_mask & 0b0001:
         df_stats.to_excel(state_result_filename, sheet_name='state')
 
