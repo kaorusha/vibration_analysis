@@ -17,8 +17,9 @@ with nidaqmx.Task() as task:
     data = task.read(READ_ALL_AVAILABLE)
     t2 = time.perf_counter()
     print('acquire time: {}'.format(t2 - t1))
-    dir = '../../test_data//20250305_good_samples//acc_data_100%//'
-    file_name = '000027'
+    t3 = time.perf_counter()
+    dir = '../../test_data//20250613_test_samples//acc_data_100%//'
+    file_name = 'b04802'
     file_name += '_lr' if sys.argv[1] == '1' else '_ud'
     if file_name.endswith('lr'):
         df = pd.DataFrame({file_name+'_left':data[0], file_name+'_right':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
@@ -26,4 +27,6 @@ with nidaqmx.Task() as task:
         df = pd.DataFrame({file_name+'_up':data[0], file_name+'_down':data[1], file_name+'_axial':data[2], file_name+'_fg':data[3]})
     df.iloc[:,0:3].plot(title='acc data', xlabel='time(sec)', ylabel='g')
     df.to_parquet(dir + '%s.parquet.gzip'%file_name, compression='gzip', index=False)
+    t4 = time.perf_counter()
+    print('write time: {}'.format(t4 - t3))
     plt.show()
