@@ -40,10 +40,14 @@ def accelerometer_input():
 def microphone_input():
     '''Acquire microphone data from NI cDAQ-9174 with NI 9234 module.'''
     with nidaqmx.Task() as task:
-        task.ai_channels.add_teds_ai_microphone_chan("cDAQ1Mod1/ai0", "mic0", max_snd_press_level=146, current_excit_val=0.2)
+        task.ai_channels.add_teds_ai_microphone_chan("cDAQ1Mod1/ai0", "mic0", 
+                                                     #mic_sensitivity=49.95, 
+                                                     max_snd_press_level=130, 
+                                                     current_excit_val=0.002)
+        
         task.ai_channels.add_ai_voltage_chan("cDAQ1Mod1/ai1", "fg")
         fs = 51200
-        acq_time = 1
+        acq_time = 5
         task.timing.cfg_samp_clk_timing(fs, sample_mode=AcquisitionType.FINITE, samps_per_chan=fs*acq_time)
         t1 = time.perf_counter()
         data = task.read(READ_ALL_AVAILABLE)
@@ -51,7 +55,7 @@ def microphone_input():
         print('acquire time: {}'.format(t2 - t1))
         t3 = time.perf_counter()
         dir = '../../test_data//20250620_test_samples//mic_data_test//'
-        file_name = 'b04802_mic'
+        file_name = 'b04802'
         df = pd.DataFrame({file_name+'_mic': data[0], file_name+'_fg': data[1]})
         df.to_parquet(dir + '%s.parquet.gzip'%file_name, compression='gzip', index=False)
         t4 = time.perf_counter()
