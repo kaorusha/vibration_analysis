@@ -56,7 +56,8 @@ def microphone_input(dir:str, file_name:str, acq_time:int = 10):
         df = pd.DataFrame({file_name+'_mic': data[0], file_name+'_fg': data[1]})
         df.to_parquet(dir + '%s.parquet.gzip'%file_name, compression='gzip', index=False)
         t4 = time.perf_counter()
-        print('write time: {}'.format(t4 - t3))
+        print('write time \t saving time')
+        print(f'{t2 - t1:.6f} \t {t4 - t3:.6f}')
         df.iloc[:,0].plot(title='mic data', xlabel='time(sec)', ylabel='Pa')
         plt.show()
 
