@@ -577,6 +577,10 @@ def acc_processing_raw(
     >>>     acc_processing_raw(dir='../../test_data//20250613_test_samples//acc_data_100%//', analysis_mask=0b0100, fs=256, nperseg=int(51200/300), noverlap=10,
                          domain='order', nfft=2560, cols=3, average='mean', psd_result_filename='../../test_data//20250613_test_samples//psd_100%_high_resolution.xlsx',
                          estimated_frame_len=int(51200/300), resample_len=256, NumRotations=10)
+    can also be used to process the mic data, which has the same format as acc data
+    >>>     acc_processing_raw(dir='../../test_data//20250623_test_samples//mic_data_100%//', analysis_mask=0b0100, fs=256, nperseg=int(51200/300), noverlap=10,
+                         domain='order', nfft=256, cols=1, average='mean', psd_result_filename='../../test_data//20250623_test_samples//psd_100%.xlsx',
+                         estimated_frame_len=int(51200/300), resample_len=256, NumRotations=10, fg_column=1) 
     """
     if analysis_mask & 0b0001:
         df_stats = pd.DataFrame()
@@ -1234,7 +1238,9 @@ def compare_spectrum_plot(df:pd.DataFrame, high_light:bool = False, titles:list 
     >>> compare_spectrum_plot(df = read_sheets('../../test_data//Defective_products_on_line_20%//fft_abnormal.xlsx'), high_light=True, linewidth=1, alpha=0.5)
     >>> compare_spectrum_plot(df = read_sheets('../../test_data//20240911_good_samples//fft.xlsx'), high_light=True, linewidth=1, alpha=0.5)
     >>> compare_spectrum_plot(df = read_sheets('psd.xlsx', usecols=[0,1,2,3], combine=True), high_light=True, linewidth=1, alpha=0.5, xmax = 20)
-
+    used for psd with only one channel
+    >>> compare_spectrum_plot(df=read_sheets('../../test_data//20250623_test_samples//psd_20%.xlsx', usecols=[0,1]),
+                              titles=['mic'], high_light=True, label_method=label_test)
     '''
     if xmax is not None:
         df = df.iloc[:xmax]
@@ -1242,6 +1248,8 @@ def compare_spectrum_plot(df:pd.DataFrame, high_light:bool = False, titles:list 
     fig, axs = plt.subplots(len(titles),1, sharex='col', layout='constrained')
     colors = [color['green'], color['orange'], color['blue']]
 
+    if len(titles) == 1:
+        axs = [axs] # change the axs into list if only one title is given
     for i in range(len(titles)):
         if mode == 'normal':
             axs[i].set_yscale('log')
@@ -1347,6 +1355,18 @@ def calculate_spectral_stats(low_order:int, high_order:int, df:pd.DataFrame):
     df['mean_energy_%i_%i'%(low_order, high_order)] = df.iloc[:, low_idx:high_idx].mean(axis=1)
     df['std_energy_%i_%i'%(low_order, high_order)] = df.iloc[:, low_idx:high_idx].std(axis=1)
     return df 
+
+def pa_to_dB_SPL(pa:pd.DataFrame, reference:float = 20e-6):
+    '''
+    transfer the pressure level in pascal to dB SPL, using the reference of 20uPa
+    '''
+    if isinstance(pa, pd.Series):
+        pa = pa.to_frame()
+    
+    # calculate the RMS dB SPL
+    rms_pressure_pa = pa.std(axis=0)
+    df_dB_SPL = 20 * np.log10(rms_pressure_pa / reference)
+    return df_dB_SPL
 
 if __name__ == '__main__':
     pass
