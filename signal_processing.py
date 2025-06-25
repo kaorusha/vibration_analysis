@@ -284,6 +284,7 @@ def to_parquet(df:pd.DataFrame, suffix:str, filename:str):
     use same parameter structure as to_excel(), since parquet file format does not have sheet, use suffix instead.
     filename might contain .parquet using the same pattern as to_excel
     '''
+    df = cast_column_to_str(df, ndigits=1) # fix ValueError: parquet must have string column names
     filename = filename.removesuffix('.gzip').removesuffix('.parquet')
     df.to_parquet(path=filename + '_' + suffix + '.parquet.gzip', compression='gzip')
 
