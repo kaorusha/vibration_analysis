@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import signal_processing
-from typing import Literal
+from typing import Literal, Union
 import time
 from joblib import load
 from sklearn.metrics import classification_report
@@ -159,7 +159,8 @@ def predict_single(psd_file:str, joblib:str, keyword:str, col:int, stats:bool, l
     print(f'Total inference time: {total_inference_time_ms:.2f} ms')
     print(f'Average inference time per sample: {total_inference_time_ms / total_samples:.2f} ms')
     
-def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str, window:bool = True):
+def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str, window:bool = True,
+              parse_func = signal_processing.parse_digital):
     '''
     load data of chosen format and filtered with keyword.
     Args:
@@ -198,30 +199,60 @@ def load_data(format:Literal['excel', 'parquet'], dir:str, keyword:str, window:b
     else:
         # select a particular channel and shuffle
         df = signal_processing.read_parquet_keyword(keyword, dir, 
-                                                parse_func=signal_processing.parse_digital).sample(frac=1).reset_index(drop=True)
+                                                parse_func=parse_func).sample(frac=1).reset_index(drop=True)
     if df.isna().any().any():
         raise ValueError('nan values exist in the teat data.')
     return df
     
     
-def preprocess_features(df:pd.DataFrame, col:int, stats:bool=False):
+def preprocess_features(df:pd.DataFrame, col:Union[int, list, tuple], stats:bool=False):
     '''
     preprocessing
 
     Parameters
     ----------
     df : dataframe contains 'sample_num' 
-    col : preserved column number
+    col : int, list or tuple (lwr, upr)
+        If int: preserve the first `col` columns.
+        If list: preserve the columns specified by the list.
+        If tuple: a range (lwr, upr) to preserve columns from lwr to upr (exclusive).
     stats : bool
         whether to add additional features such as mean and std of specific features
     '''
+    if not isinstance(col, (int, list, tuple)):
+        raise TypeError('col must be int, list or tuple, but got %s.' % type(col))
+    # check if the column number is valid
+    if isinstance(col, int):
+        if col <= 0 or col > df.shape[1] - 1:
+            raise ValueError('col must be a positive integer less than the number of columns in the dataframe, '
+                             'but got %d.' % col)
+        preserve_df = df.iloc[:, :col]
+    elif isinstance(col, (list, tuple)):
+        if len(col) == 0:
+            raise ValueError('col must be a non-empty list or tuple, but got an empty %s.' % type(col))
+        # check if the column number is valid
+        if not all(isinstance(i, int) and 0 <= i < df.shape[1] for i in col):
+            raise ValueError('col must be a list or tuple of positive integers less than the number of columns in the dataframe, '
+                             'but got %s.' % col)
+        if isinstance(col, list):
+            if len(col) == 1:
+                preserve_df = df.iloc[:, col[0]]
+            else:
+                preserve_df = df.iloc[:, col]
+        else:  # tuple
+            if len(col) != 2:
+                raise ValueError('col must be a tuple of two integers, but got %s.' % col)
+            if col[0] < 0 or col[1] > df.shape[1] or col[0] >= col[1]:
+                raise ValueError('col must be a tuple of two integers, where the first integer is less than the second integer, '
+                                 'and both integers are less than the number of columns in the dataframe, but got %s.' % col)
+            preserve_df = df.iloc[:, col[0]:col[1]]
     # add additional features such as mean and std of specific features
     if stats:
         df = signal_processing.calculate_spectral_stats(30, 80, df)
         # drop unused columns to reduce feature number
-        df = pd.concat([df.iloc[:, :col], df.iloc[:, -3:]], axis=1)
+        df = pd.concat([preserve_df, df.iloc[:, -3:]], axis=1)
     else:
-        df = pd.concat([df.iloc[:, :col], df['sample_num']], axis=1)
+        df = pd.concat([preserve_df, df['sample_num']], axis=1)
     # transfer the column label into string before training
     df = signal_processing.cast_column_to_str(df, 2)
     if df.isna().any().any():
@@ -229,7 +260,7 @@ def preprocess_features(df:pd.DataFrame, col:int, stats:bool=False):
         
     return df
 
-def train_test_split(df:pd.DataFrame, test_samples: list):
+def train_test_split(df:pd.DataFrame, test_samples: list, label_mothod = label_transfer):
     '''
     separate train and test set
 
@@ -240,8 +271,8 @@ def train_test_split(df:pd.DataFrame, test_samples: list):
     X_train = df.loc[[x not in test_samples for x in df['sample_num']]]
     X_test = df.loc[[x in test_samples for x in df['sample_num']]]
 
-    y_train = np.array([label_transfer(sample_num) for sample_num in X_train['sample_num']])
-    y_test = np.array([label_transfer(sample_num) for sample_num in X_test['sample_num']])
+    y_train = np.array([label_mothod(sample_num) for sample_num in X_train['sample_num']])
+    y_test = np.array([label_mothod(sample_num) for sample_num in X_test['sample_num']])
 
     # encode categorical columns
     y_train = pd.DataFrame(y_train, dtype="category")
@@ -512,35 +543,249 @@ def train_models(dataset_name:str, dir:str, format:Literal['excel', 'parquet'],
     train_autosklearn_v2_model(dataset_name, model_save_path + '_v2.joblib', set_no, channel, X_train, X_test, y_train, y_test,
                                ensemble_kwargs = {'ensemble_size': 5, 'metrics': metrics.CLASSIFICATION_METRICS['f1_weighted']},
                                ensemble_nbest=10)
+
+def sample_from_df(df:pd.DataFrame, frac:float):
+    '''
+    sample from the dataframe, return the sample number of the sampled data.
+    Args:
+        df (pd.DataFrame): 
+            the dataframe containing the psd spectrum data. Contains a column 'sample_num' which is the sample number.
+        frac (float): 
+            the fraction of samples to be sampled from the dataframe.
+    '''
+    all_samples = df['sample_num'].value_counts()
+    return all_samples.sample(frac=frac).index.to_list()
+
+def draw_confusion_matrix(y_true: pd.DataFrame, y_pred: pd.DataFrame):
+    from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
     
+    cm = confusion_matrix(y_true, y_pred)
+    cm_display = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=np.unique(y_true)).plot()
+    return cm_display
+
+def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame, 
+                   confusion_matrix:bool = True, 
+                   roc_pr_curve:bool = True):
+    ''' Evaluate the model's performance on the test set and print the results.
+    Args:
+        model (object): 
+            the trained model to be evaluated. The model should have `decision_function` and `predict` methods.
+            Note: the anomaly is predicted as 1, and normal is predicted as 0.
+        X_test (pd.DataFrame): 
+            the test data features.
+        y_test (pd.DataFrame): 
+            the test data labels.
+        confusion_matrix (bool): 
+            whether to draw the confusion matrix. Default is True.
+        roc_pr_curve (bool): 
+            whether to draw the ROC and Precision-Recall curves. Default is True.
+    '''
+    from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, f1_score
+    
+    y_test_scores = model.decision_function(X_test)
+    # default y_test_pred is the prediction based on the model's internal threshold
+    # this is used for initial f1-score calculation
+    y_test_pred = model.predict(X_test)
+    
+    # evaluate and print the results
+    roc_auc = roc_auc_score(y_test, y_test_scores)
+    precision, recall, thresholds = precision_recall_curve(y_test, y_test_scores)
+    pr_auc = auc(recall, precision)
+    
+    # find the optimal threshold based on F1-score
+    # Note: thresholds has one less element than precision/recall since it represents the threshold 
+    # for the next precision/recall pair
+    f_scores_at_thresholds = 2 * (precision * recall) / (precision + recall + 1e-10) # add small value to avoid division by zero
+    
+    # in case of all precision or recall is zero, f_scores_at_thresholds will be all zeros
+    if np.all(f_scores_at_thresholds == 0):
+        print("all F1-score is zero, no optimal threshold found.")
+        optimal_f1_idx = 0 # fallback to the first threshold
+    else:        
+        optimal_f1_idx = np.argmax(f_scores_at_thresholds)
+    
+    optimal_threshold = thresholds[optimal_f1_idx]
+    optimal_precision = precision[optimal_f1_idx]
+    optimal_recall = recall[optimal_f1_idx]
+    optimal_f1_score = f_scores_at_thresholds[optimal_f1_idx]
+    y_test_pred_at_optimal_f1 = (y_test_scores >= optimal_threshold).astype(int)
+    
+    # calculate the final predictions based on the optimal threshold
+    # For anomaly detection, Precision-Recall Curve (PRC) and PR-AUC is preferred over ROC-AUC,
+    # because ROC-AUC can be misleading in imbalanced datasets.    
+    print(f"\n---Model: {model.__class__.__name__}---")
+    print(f"ROC AUC: {roc_auc:.4f}, PR AUC: {pr_auc:.4f}")
+    print(f"F1-score (based on model's internal threshold): {f1_score(y_test, y_test_pred):.4f}")
+    print(f"Predicted Anomalies: {np.sum(y_test_pred)}")
+    print(f"\n---Metrics pf Optimal F1-score threshold:---")
+    print(f"  Optimal F1-score: {optimal_f1_score:.4f}")
+    print(f"  Optimal Threshold: {optimal_threshold:.4f}")
+    print(f"  Precision at optimal threshold: {optimal_precision:.4f}")
+    print(f"  Recall at optimal threshold: {optimal_recall:.4f}")
+    print(f"  Predicted Anomalies: {np.sum(y_test_pred_at_optimal_f1)}")
+
+
+    if confusion_matrix:
+        disp = draw_confusion_matrix(y_test, y_test_pred_at_optimal_f1)
+        disp.ax_.set_title(f'Confusion Matrix for {model.__class__.__name__} at Optimal F1 Threshold ({optimal_threshold:.4f})')
+        plt.show()
+    
+    if roc_pr_curve:
+        fig, (ax1, ax2) = plt.subplots(1, 2, layout='constrained', figsize=(12, 6))
+        
+        # ROC curve
+        from sklearn.metrics import roc_curve, RocCurveDisplay
+        fpr, tpr, roc_thresholds = roc_curve(y_test, y_test_scores)
+        roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=roc_auc, estimator_name= model.__class__.__name__)
+        roc_display.plot(ax=ax1)
+        # mark the threshold with maximum F1 score
+        idx  = np.argmin(np.abs(roc_thresholds - optimal_threshold))
+        ax1.plot(fpr[idx], tpr[idx], 'o', markersize=5, color='red',
+                 label=f'Optimal F1 Threshold point={optimal_threshold:.4f}')
+        ax1.legend(loc='lower right')
+        ax1.set_title('ROC Curve')
+
+        # Precision-Recall curve
+        from sklearn.metrics import PrecisionRecallDisplay
+        pr_display = PrecisionRecallDisplay(precision=precision, recall=recall, average_precision=pr_auc,
+                                            estimator_name=model.__class__.__name__)
+        pr_display.plot(ax=ax2)
+        # mark the threshold with maximum F1 score
+        ax2.plot(optimal_recall, optimal_precision, 'o', markersize=5, color='red',
+             label=f'Optimal F1={optimal_f1_score:.4f}\n(P={optimal_precision:.4f}, R={optimal_recall:.4f}, Thresh={optimal_threshold:.4f})')
+        
+        ax2.legend(loc='lower left')
+        ax2.set_title('Precision-Recall Curve')
+        plt.show()
+
+def Novelty_detection():
+    '''
+    detect novelty in the psd spectrum
+    '''
+    from pyod.models.ocsvm import OCSVM
+    from pyod.models.iforest import IForest
+    from pyod.models.lof import LOF
+    #from pyod.models.auto_encoder import AutoEncoder
+    from pyod.utils.data import evaluate_print
+    # 1. 訓練集只包含良品數據
+    def parse_func(filename:str):
+        '''
+        parse the filename to get the sample number
+        '''
+        return filename.split('_')[3]
+    df = load_data(format='parquet', dir='../../test_data//20250623_test_samples//psd_20%_window//', 
+                   keyword='mic', parse_func=parse_func)
+    
+    abnormal_samples_num = ['b00053', 'b04802']
+    good_samples_psd_data = df.loc[[x not in abnormal_samples_num for x in df['sample_num']]]
+    
+    # 2. 構建測試集 (包含未見過的良品和所有不良品)
+    test_samples_num = sample_from_df(good_samples_psd_data, 0.3) # 30% of good samples for validation
+    def label_method(sample_num: str):
+        '''
+        transfer sample number to label 0 and 1
+        '''
+        return 0 if sample_num not in abnormal_samples_num else 1
+    
+    df = preprocess_features(df, col=(50,170))
+    X_train_good, X_test, y_train_good, y_test = train_test_split(df, test_samples_num+abnormal_samples_num, label_mothod=label_method)
+    contamination = 0.05
+    # 3. compare different novelty detection methods
+    # OCSVM
+    model_ocsvm = OCSVM(nu=0.01, contamination=contamination)
+    model_ocsvm.fit(X_train_good)
+    evaluate_model(model_ocsvm, X_test, y_test)
+    # Isolation Forest
+    model_iforest = IForest(contamination=contamination, random_state=42)
+    model_iforest.fit(X_train_good)
+    evaluate_model(model_iforest, X_test, y_test)
+    # Local Outlier Factor
+    model_lof = LOF(contamination=contamination, n_neighbors=20, novelty=True)
+    model_lof.fit(X_train_good)
+    evaluate_model(model_lof, X_test, y_test)
+
+    '''
+    # AutoEncoder
+    model_ae = AutoEncoder( hidden_neurons=[64, 32, 16, 32, 64], 
+                            hidden_activation='relu',
+                            output_activation='sigmoid', # 如果數據經過正規化到 [0,1]，則用 sigmoid
+                            loss='mse',
+                            optimizer='adam',
+                            epochs=50,
+                            batch_size=32,
+                            contamination=contamination,
+                            random_state=42,
+                            verbose=0)
+    model_ae.fit(X_train_good)
+    evaluate_model(model_ae, X_test, y_test)
+    
+    '''
+
+def view_model_pipeline(model_file_name: str):
+    '''
+    view the model pipeline
+    Args:
+        model_file_name (str): 
+            the file name of the trained model, which is a joblib file.
+    '''
+    import autosklearn.classification as asc
+
+    # 假設你已經訓練好了 automl 模型
+    # automl = asc.AutoSklearnClassifier(...)
+    # automl.fit(...)
+
+    # 1. 獲取最佳 pipeline 的詳細信息
+    # 這會返回一個字典，其中包含每個 pipeline 的 ID 和其對應的物件
+    best_model_id = automl.leaderboard().index[0] # 通常 leaderboard 的第一行就是最佳模型
+    best_pipeline = automl.show_models()[best_model_id]
+
+    # 2. 解析 pipeline 結構
+    # auto-sklearn 的 pipeline 是一個特殊的類型，但你可以訪問其內部結構。
+    # 通常，特徵轉換器會被包裝在一個 'feature_preprocessor' 或 'data_preprocessor' 步驟中。
+    # 需要根據 best_pipeline 的具體結構來判斷。
+
+    # 這裡假設 auto-sklearn 的 pipeline 結構類似 sklearn.pipeline.Pipeline
+    # 最佳 pipeline 的內部結構可能會比較複雜，它可能是一個 AutoSklearnManagedPipeline
+    # 你需要檢查這個對象的屬性。
+
+    # 一種常見的訪問方式是通過 `steps` 屬性（如果它是一個 sklearn Pipeline-like object）
+    # 或者通過 automl 內部維護的 pipeline 對象
+    # 檢查 https://automl.github.io/auto-sklearn/master/api.html#autosklearn.classification.AutoSklearnClassifier.show_models
+
+    # 示例：假定 best_pipeline_obj 是你獲取到的實際 Pipeline 物件
+    # (注意：直接從 show_models() 得到的字典可能需要進一步處理才能得到 Pipeline 物件)
+    # 假設你已經提取到類似 sklearn.pipeline.Pipeline 的物件
+    # 比如通過 automl._automl._backend.load_pipeline(run_key)
+
+    # 假設 pipeline_obj 是已經載入的 scikit-learn Pipeline 物件
+    # for step_name, step_transformer in pipeline_obj.steps:
+    #     if "feature_preprocessor" in step_name or "data_preprocessor" in step_name:
+    #         feature_transformer = step_transformer
+    #         print(f"找到特徵轉換器: {step_name} - {feature_transformer}")
+    #         break
+
+    # 更可靠的方法是從 `automl.get_models_with_weights()` 中獲取實際的 scikit-learn 模型對象
+    for weight, model in automl.get_models_with_weights():
+        # 這裡 model 是一個 sklearn.pipeline.Pipeline 的實例
+        # 你可能需要找到權重最高的那個模型，或者檢查每一個
+        if weight > 0: # 獲取權重不為零的模型
+            print(f"處理權重為 {weight} 的模型...")
+            for name, step in model.steps:
+                # 判斷是否為特徵轉換步驟
+                # 常見的特徵轉換步驟名稱可能包含 'data_preprocessor', 'feature_preprocessor', 'reduction' 等
+                # 你可以根據 auto-sklearn 可能使用的轉換器類型來判斷，例如 PCA, RBF kernelizer 等
+                if hasattr(step, 'transform') and not hasattr(step, 'predict'):
+                    print(f"  找到潛在的特徵轉換步驟: {name}, Transformer: {step.__class__.__name__}")
+                    # 如果這是你需要的特徵轉換器，你可以保存它
+                    # feature_transformer = step
+                    # break # 如果你只想要第一個
+
+            # 你也可以直接訪問 pipeline 中的特定步驟
+            # 例如，如果 auto-sklearn 使用了 PCA 作為 feature_preprocessor
+            # if 'feature_preprocessor' in model.named_steps:
+            #     pca_transformer = model.named_steps['feature_preprocessor']
+            #     print(f"提取的 PCA 轉換器: {pca_transformer}")
+            #     # 你現在可以使用 pca_transformer.transform(your_new_data) 來進行特徵轉換
+
 if __name__ == '__main__':
-    keyword = 'ud_axial'
-    set_no = 3
-    col = 400
-    dir_model = '../../model//100duty_high_resolution_5ensemble//'
-    '''
-    # train models with autosklearn v1 and v2
-    train_models(dataset_name='DS_H_01,PP_LR_%d_H'%col,dir='../../test_data//psd_100%//psd_window_100%//',
-                  format='parquet',
-                  channel=keyword, set_no=set_no, col=col, stats=False, model_save_path=dir_model, high_resolution=False)
-    '''
-    defact_list = ['a00053', 'a03720', 'a04802', 'a01833']
-    def label_test(sample_num: str):
-        if sample_num in ['b00053', 'b04802']:
-            return 1
-        else:
-            return 0
-    dir_psd_1 = '../../test_data//20250410_test_samples//psd_100%//psd_high_resolution.xlsx'
-    dir_psd_2 = '../../test_data//20250613_test_samples//psd_100%_high_resolution.xlsx'
-    df_1 = load_data(window=False, format='excel', dir=dir_psd_1, keyword=keyword)
-    df_1 = df_1.loc[[x not in defact_list for x in df_1['sample_num']]]
-    df_2 = load_data(window=False, format='excel', dir=dir_psd_2, keyword=keyword)
-    df = pd.concat([df_1, df_2], axis=0).reset_index(drop=True)
-    
-    versions = ['v1', 'v2']
-    # predict the test samples with the trained models
-    for version in versions:
-        joblib = dir_model + '%s_high_resolution_set%d_%d_%s.joblib'%(keyword, set_no, col, version)
-        model_info(joblib, show_models=False)
-        predict(df=df, psd_file='../../test_data//20250410_test_samples//psd_100%//psd.xlsx',
-                joblib=joblib, keyword=keyword, col=col, stats=False, label_method=label_test) 
+    Novelty_detection()
