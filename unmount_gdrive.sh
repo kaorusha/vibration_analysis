@@ -16,11 +16,19 @@ if mountpoint -q "$MOUNT_POINT"; then
         echo "Successfully unmounted."
         # delete the mount point directory after unmounting
         if [ -d "$MOUNT_POINT" ]; then
-            rm -rf "$MOUNT_POINT"
-            if [ $? -eq 0 ]; then
-                echo "Mount point directory $MOUNT_POINT removed."
+        # Check if the directory is empty before removing
+            if [ -z "$(ls -A "$MOUNT_POINT" 2>/dev/null)"]; then
+                echo "Mount point directory $MOUNT_POINT is empty. Removing..."
+                rmdir "$MOUNT_POINT"
+                if [ $? -eq 0 ]; then
+                    echo "Success: Mount point directory $MOUNT_POINT removed."
+                else
+                    echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+                fi
             else
-                echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+                echo "Mount point directory $MOUNT_POINT is not empty after unmount."
+                echo "Please manually remove it if desired."
+                echo "Contents: $(ls -A "$MOUNT_POINT" 2>/dev/null)"
             fi
         else
             echo "Warning: Mount point directory $MOUNT_POINT does not exist."
@@ -32,11 +40,19 @@ if mountpoint -q "$MOUNT_POINT"; then
             echo "Successfully lazy unmounted."
             # delete the mount point directory after unmounting
             if [ -d "$MOUNT_POINT" ]; then
-                rm -rf "$MOUNT_POINT"
-                if [ $? -eq 0 ]; then
-                    echo "Mount point directory $MOUNT_POINT removed."
+            # Check if the directory is empty before removing
+                if [ -z "$(ls -A "$MOUNT_POINT" 2>/dev/null)"]; then
+                    echo "Mount point directory $MOUNT_POINT is empty. Removing..."
+                    rmdir "$MOUNT_POINT"
+                    if [ $? -eq 0 ]; then
+                        echo "Success: Mount point directory $MOUNT_POINT removed."
+                    else
+                        echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+                    fi
                 else
-                    echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+                    echo "Mount point directory $MOUNT_POINT is not empty after unmount."
+                    echo "Please manually remove it if desired."
+                    echo "Contents: $(ls -A "$MOUNT_POINT" 2>/dev/null)"
                 fi
             else
                 echo "Warning: Mount point directory $MOUNT_POINT does not exist."
