@@ -7,6 +7,8 @@ import time
 from joblib import load
 from sklearn.metrics import classification_report
 import autosklearn.metrics as metrics
+import mlflow
+import mlflow.sklearn
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -556,16 +558,8 @@ def sample_from_df(df:pd.DataFrame, frac:float):
     all_samples = df['sample_num'].value_counts()
     return all_samples.sample(frac=frac).index.to_list()
 
-def draw_confusion_matrix(y_true: pd.DataFrame, y_pred: pd.DataFrame):
-    from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-    
-    cm = confusion_matrix(y_true, y_pred)
-    cm_display = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=np.unique(y_true)).plot()
-    return cm_display
-
 def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame, 
-                   confusion_matrix:bool = True, 
-                   roc_pr_curve:bool = True):
+                   draw_plot:bool = True):
     ''' Evaluate the model's performance on the test set and print the results.
     Args:
         model (object): 
@@ -575,12 +569,15 @@ def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame,
             the test data features.
         y_test (pd.DataFrame): 
             the test data labels.
-        confusion_matrix (bool): 
-            whether to draw the confusion matrix. Default is True.
-        roc_pr_curve (bool): 
-            whether to draw the ROC and Precision-Recall curves. Default is True.
+        draw_plot (bool):
+            whether to draw the evaluation plots, such as confusion matrix, ROC curve, and Precision-Recall curve.
+    Returns:
+        metrics (dict):
+            a dictionary containing all the evaluation metrics.
+        plots (dict):
+            a dictionary containing the evaluation plots, such as confusion matrix, ROC curve, and Precision-Recall curve.
     '''
-    from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, f1_score
+    from sklearn.metrics import roc_auc_score, precision_recall_curve, auc, f1_score, confusion_matrix, ConfusionMatrixDisplay
     
     y_test_scores = model.decision_function(X_test)
     # default y_test_pred is the prediction based on the model's internal threshold
@@ -608,29 +605,44 @@ def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame,
     optimal_precision = precision[optimal_f1_idx]
     optimal_recall = recall[optimal_f1_idx]
     optimal_f1_score = f_scores_at_thresholds[optimal_f1_idx]
-    y_test_pred_at_optimal_f1 = (y_test_scores >= optimal_threshold).astype(int)
+    y_test_pred_optimal_f1 = (y_test_scores >= optimal_threshold).astype(int)
     
-    # calculate the final predictions based on the optimal threshold
-    # For anomaly detection, Precision-Recall Curve (PRC) and PR-AUC is preferred over ROC-AUC,
-    # because ROC-AUC can be misleading in imbalanced datasets.    
-    print(f"\n---Model: {model.__class__.__name__}---")
-    print(f"ROC AUC: {roc_auc:.4f}, PR AUC: {pr_auc:.4f}")
-    print(f"F1-score (based on model's internal threshold): {f1_score(y_test, y_test_pred):.4f}")
-    print(f"Predicted Anomalies: {np.sum(y_test_pred)}")
-    print(f"\n---Metrics pf Optimal F1-score threshold:---")
-    print(f"  Optimal F1-score: {optimal_f1_score:.4f}")
-    print(f"  Optimal Threshold: {optimal_threshold:.4f}")
-    print(f"  Precision at optimal threshold: {optimal_precision:.4f}")
-    print(f"  Recall at optimal threshold: {optimal_recall:.4f}")
-    print(f"  Predicted Anomalies: {np.sum(y_test_pred_at_optimal_f1)}")
+    # calculate metrics for the model's internal threshold
+    f1_score_internal = f1_score(y_test, y_test_pred)
+    predicted_anomalies_internal = np.sum(y_test_pred)
 
+    # calculate metrics for the optimal F1 threshold
+    cm_optimal_f1 = confusion_matrix(y_test, y_test_pred_optimal_f1)
+    predicted_anomalies_optimal_f1 = np.sum(y_test_pred_optimal_f1)
+    
+    # Prepare metrics dictionary
+    metrics = {
+        'ROC_AUC': roc_auc,
+        'PR_AUC': pr_auc,
+        'Optimal_F1_Score': optimal_f1_score,
+        'Optimal_Threshold': optimal_threshold,
+        'Precision_at_Optimal_F1': optimal_precision,
+        'Recall_at_Optimal_F1': optimal_recall,
+        'Predicted_Anomalies_Optimal_F1': int(predicted_anomalies_optimal_f1),
+        # store confusion matrix as a dictionary (for JSON logging) in metrics, insure INT type
+        'Confusion_Matrix_Optimal_F1': {
+            'TN': int(cm_optimal_f1[0, 0]),   'FP': int(cm_optimal_f1[0, 1]),
+            'FN': int(cm_optimal_f1[1, 0]),   'TP': int(cm_optimal_f1[1, 1]),
+        },
+        'Model_Default_F1_Score': f1_score_internal,
+        'Model_Default_Predicted_Anomalies': int(predicted_anomalies_internal),
+    }
 
-    if confusion_matrix:
-        disp = draw_confusion_matrix(y_test, y_test_pred_at_optimal_f1)
-        disp.ax_.set_title(f'Confusion Matrix for {model.__class__.__name__} at Optimal F1 Threshold ({optimal_threshold:.4f})')
+    plots = {}
+    if draw_plot:
+        # draw confusion matrix for the model's optimal F1 threshold
+        cm_display = ConfusionMatrixDisplay(confusion_matrix=cm_optimal_f1, 
+                                            display_labels=np.unique(y_test)).plot(cmap='Blues')
+        cm_display.ax_.set_title(f'Confusion Matrix for {model.__class__.__name__} at Optimal F1 Threshold ({optimal_threshold:.4f})')
+        plots['confusion_matrix'] = cm_display.figure_
         plt.show()
-    
-    if roc_pr_curve:
+
+        # draw ROC and Precision-Recall curves
         fig, (ax1, ax2) = plt.subplots(1, 2, layout='constrained', figsize=(12, 6))
         
         # ROC curve
@@ -656,8 +668,100 @@ def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame,
         
         ax2.legend(loc='lower left')
         ax2.set_title('Precision-Recall Curve')
+        plots['roc_pr_curve'] = fig
         plt.show()
+    
+    return metrics, plots
 
+def log_anomaly_detection_run(model_name: str, model_instance: object, 
+                              hyperparameters: dict,
+                              input_example: pd.DataFrame, # Added for logging model
+                              training_time_sec: float,
+                              dataset_id:str,
+                              metrics: dict,
+                              plots: dict,
+                              test_samples_num: list,
+                              preprocessing_id: str = 'N/A', 
+                              feature_transformer_id: str = 'None',
+                              good_data_train_split: str = 'N/A',
+                              channel: str = 'mic0',
+                              notes: str = '',
+                              hardware_environment: str = 'Win10/cDAQ9171/NI-9234',
+                              ):
+    ''' Log the anomaly detection run details and evaluate the model to MLflow.
+    Args:
+        model_name (str): 
+            the name of the model, which will be used in the MLflow run name.
+        model_instance (object): 
+            the trained model instance to be logged.
+        input_example (pd.DataFrame): 
+            an example input for the model, used to infer the model signature.
+            This should be a single row of the test data, which will be used to log the model.
+            It is used to infer the model signature for logging purposes.
+            This is important for logging the model in MLflow.
+            The input_example should be a DataFrame with the same structure as the training data.
+        training_time_sec (float): 
+            the total training time of the model in seconds.
+        metrics (dict): 
+            a dictionary containing evaluation metrics of the model, such as ROC_AUC, PR_AUC, etc.
+        plots (dict): 
+            a dictionary containing plots to be logged, such as confusion matrix, ROC curve, etc.
+            Note: plots should be in the format {'confusion_matrix': cm_display, 'roc_curve': roc_display, ...}
+            where cm_display and roc_display are matplotlib figure objects.
+            These plots will be saved as images in the MLflow run artifacts.
+        hyperparameters (dict): 
+            a dictionary containing hyperparameters of the model.
+        dataset_id (str): 
+            the dataset ID used for logging purposes.
+        test_samples_num (list): 
+            a list of sample numbers used for testing.
+        preprocessing_id (str, optional): 
+            the preprocessing ID used for logging purposes. Defaults to 'N/A'.
+        feature_transformer_id (str, optional): 
+            the feature transformer ID used for logging purposes. Defaults to 'None'.
+        good_data_train_split (str, optional): 
+            the train-test split method used for logging purposes (e.g., '80%'). Defaults to 'N/A'.
+        channel (str, optional): 
+            the sensor channel used for logging purposes. Defaults to 'mic0'.
+        notes (str, optional): 
+            additional notes for the run. Defaults to ''.
+        hardware_environment (str, optional): 
+            hardware environment information. Defaults to 'Win10/cDAQ9171/NI-9234'.
+    '''
+    with mlflow.start_run(run_name=model_name) as run:
+        mlflow.log_param("model_name", model_name)
+        mlflow.log_params(hyperparameters)
+        mlflow.log_param("training_time_sec", training_time_sec)
+        mlflow.log_param("dataset_id", dataset_id)
+        mlflow.log_param("preprocessing_id", preprocessing_id)
+        mlflow.log_param("feature_transformer_id", feature_transformer_id)
+        mlflow.log_param("good_data_train_split", good_data_train_split)
+        mlflow.log_param("channel", channel)
+        mlflow.log_param("hardware_environment", hardware_environment)
+        mlflow.log_param("test_samples_num", str(test_samples_num))
+        mlflow.log_param("notes", notes)
+        # since log_metrics only accepts float values, we need to convert the metrics dictionary
+        # to a dictionary with float values
+        cm = metrics.pop('Confusion_Matrix_Optimal_F1', {})  
+        mlflow.log_params(cm)
+        mlflow.log_metrics(metrics)
+        
+        # get a sample output for signature inference
+        # if model_instance.decision_function or predict() returns a 1D array, take the first element
+        sample_output = model_instance.decision_function(input_example) if hasattr(model_instance, 'decision_function') else model_instance.predict(input_example)
+        sample_output = sample_output[0] if isinstance(sample_output, np.ndarray) and sample_output.ndim > 1 else sample_output
+        # log the model instance
+        signature = mlflow.models.infer_signature(input_example, sample_output) #output is a single float score
+        mlflow.sklearn.log_model(model_instance, name="model", input_example=input_example,
+                                 signature=signature, registered_model_name=model_name)
+        
+        # log plots as artifacts
+        for plot_name, fig_obj in plots.items():
+            mlflow.log_figure(fig_obj, f"plots/{plot_name}.png")
+        
+        print(f"Run {run.info.run_id} logged successfully with model: {model_name}")
+        print(f"Run URL: {mlflow.get_tracking_uri()}")
+    
 def Novelty_detection():
     '''
     detect novelty in the psd spectrum
@@ -676,6 +780,7 @@ def Novelty_detection():
     df = load_data(format='parquet', dir='../../test_data//20250623_test_samples//psd_20%_window//', 
                    keyword='mic', parse_func=parse_func)
     
+    print(df.head())
     abnormal_samples_num = ['b00053', 'b04802']
     good_samples_psd_data = df.loc[[x not in abnormal_samples_num for x in df['sample_num']]]
     
@@ -689,21 +794,78 @@ def Novelty_detection():
     
     df = preprocess_features(df, col=(50,170))
     X_train_good, X_test, y_train_good, y_test = train_test_split(df, test_samples_num+abnormal_samples_num, label_mothod=label_method)
+    
+    input_example = X_test.iloc[[0]]  # Use the first row of X_test as an example input for logging
+    test_samples = test_samples_num + abnormal_samples_num
     contamination = 0.05
+    dataset_id = 'DS_L_04'  # dataset ID for logging purposes
+    preprocessing_id = 'PP_LR_512'  # preprocessing ID for logging purposes
+    feature_transformer_id = 'None'  # feature transformer ID for logging purposes
+    good_data_train_split = '70%'  # train-test split method for logging purposes
     # 3. compare different novelty detection methods
     # OCSVM
+    print('\n--- Training OCSVM ---')
+    start_time = time.time()
     model_ocsvm = OCSVM(nu=0.01, contamination=contamination)
     model_ocsvm.fit(X_train_good)
-    evaluate_model(model_ocsvm, X_test, y_test)
+    training_time_ocsvm = time.time() - start_time
+    metrics_ocsvm, plots_ocsvm = evaluate_model(model_ocsvm, X_test, y_test)
+    log_anomaly_detection_run(
+        model_name=model_ocsvm.__class__.__name__,
+        model_instance=model_ocsvm,
+        hyperparameters=model_ocsvm.get_params(),
+        input_example=input_example,
+        training_time_sec=training_time_ocsvm,
+        dataset_id=dataset_id,
+        metrics=metrics_ocsvm,
+        plots=plots_ocsvm,
+        test_samples_num=test_samples,
+        preprocessing_id=preprocessing_id,
+        feature_transformer_id=feature_transformer_id,
+        good_data_train_split=good_data_train_split,
+    )
     # Isolation Forest
+    print('\n--- Training Isolation Forest ---')
+    start_time = time.time()
     model_iforest = IForest(contamination=contamination, random_state=42)
     model_iforest.fit(X_train_good)
-    evaluate_model(model_iforest, X_test, y_test)
+    training_time_iforest = time.time() - start_time
+    metrics_iforest, plots_iforest = evaluate_model(model_iforest, X_test, y_test)
+    log_anomaly_detection_run(
+        model_name=model_iforest.__class__.__name__,
+        model_instance=model_iforest,
+        hyperparameters=model_iforest.get_params(),
+        input_example=input_example,
+        training_time_sec=training_time_iforest,
+        dataset_id=dataset_id,
+        metrics=metrics_iforest,
+        plots=plots_iforest,
+        test_samples_num=test_samples,
+        preprocessing_id=preprocessing_id,
+        feature_transformer_id=feature_transformer_id,
+        good_data_train_split=good_data_train_split,
+    )
     # Local Outlier Factor
+    print('\n--- Training Local Outlier Factor ---')
+    start_time = time.time()
     model_lof = LOF(contamination=contamination, n_neighbors=20, novelty=True)
     model_lof.fit(X_train_good)
-    evaluate_model(model_lof, X_test, y_test)
-
+    training_time_lof = time.time() - start_time
+    metrics_lof, plots_lof = evaluate_model(model_lof, X_test, y_test)
+    log_anomaly_detection_run(
+        model_name=model_lof.__class__.__name__,
+        model_instance=model_lof,
+        hyperparameters=model_lof.get_params(),
+        input_example=input_example,
+        training_time_sec=training_time_lof,
+        dataset_id=dataset_id,
+        metrics=metrics_lof,
+        plots=plots_lof,
+        test_samples_num=test_samples,
+        preprocessing_id=preprocessing_id,
+        feature_transformer_id=feature_transformer_id,
+        good_data_train_split=good_data_train_split,
+    )
     '''
     # AutoEncoder
     model_ae = AutoEncoder( hidden_neurons=[64, 32, 16, 32, 64], 
@@ -788,4 +950,7 @@ def view_model_pipeline(model_file_name: str):
             #     # 你現在可以使用 pca_transformer.transform(your_new_data) 來進行特徵轉換
 
 if __name__ == '__main__':
+    # Set MLflow tracking URI
+    mlflow.set_tracking_uri('file:./mlruns')
+    mlflow.set_experiment('Novelty Detection Experiment on Sound Data PSD Spectrum use feature order 50-170')
     Novelty_detection()
