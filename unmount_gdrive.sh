@@ -14,11 +14,33 @@ if mountpoint -q "$MOUNT_POINT"; then
     fusermount -u "$MOUNT_POINT"
     if [ $? -eq 0 ]; then
         echo "Successfully unmounted."
+        # delete the mount point directory after unmounting
+        if [ -d "$MOUNT_POINT" ]; then
+            rm -rf "$MOUNT_POINT"
+            if [ $? -eq 0 ]; then
+                echo "Mount point directory $MOUNT_POINT removed."
+            else
+                echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+            fi
+        else
+            echo "Warning: Mount point directory $MOUNT_POINT does not exist."
+        fi
     else
         echo "Failed to unmount. Trying lazy unmount..."
         fusermount -uz "$MOUNT_POINT"
         if [ $? -eq 0 ]; then
             echo "Successfully lazy unmounted."
+            # delete the mount point directory after unmounting
+            if [ -d "$MOUNT_POINT" ]; then
+                rm -rf "$MOUNT_POINT"
+                if [ $? -eq 0 ]; then
+                    echo "Mount point directory $MOUNT_POINT removed."
+                else
+                    echo "Warning: Failed to remove mount point directory $MOUNT_POINT. Please check permissions."
+                fi
+            else
+                echo "Warning: Mount point directory $MOUNT_POINT does not exist."
+            fi
         else
             echo "Failed to unmount Google Drive."
             exit 1

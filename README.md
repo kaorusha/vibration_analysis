@@ -11,6 +11,44 @@ Each measurement is store in a `.xlsx` file with single sheet to prevent large f
 
 All measurement that after FFT will saved in different sheet of the same `.xlsx` file, with index in the first column, representing the frequency or the order of rotation frequency. The order of rotation frequency is used for compatibility of different rotation speed of sample.
 
+## Machine learning
+### Anomaly detection
+#### Integrate MLflow into current training workflow 
+Workflow Summary
+
+* **Preparation (One-time)**
+Ensure rclone is installed and configured with a remote (e.g., google_drive_mlflow) pointing to your Google Drive.
+
+* **Mount**:
+
+Crucial: Before running `mount_gdrive.sh`, ensure the local `mlruns` directory in your project is empty or doesn't exist. If it exists and contains data from a previous run, it will prevent correct mounting.
+
+Execute:
+```sh        
+bash mount_gdrive.sh ./mlruns (or your chosen mount point). #This will mount your Google Drive's mlruns subdirectory to your local ./mlruns folder.
+```
+* **Run MLflow**:
+
+In your Python script, set the MLflow tracking URI: 
+```python
+mlflow.set_tracking_uri("file://./mlruns"). # or chosen directory
+```
+Run your Python script to train models and log results. 
+> If the mount directory does not exist because the **Mount** step does not execute successful, a new directory will be created, this directory can not set as mount point because it will conflict with`rclone`.
+
+* **(Optional)** In a separate terminal, start the MLflow UI: 
+```sh
+mlflow ui
+``` 
+(this will read from the mounted `mlruns` directory).
+
+* **Unmount**:
+Once your Python script has finished logging, execute: 
+```sh
+bash unmount_gdrive.sh ./mlruns.
+```
+This will unmount the Google Drive and then delete the local `./mlruns` directory (the mount point itself), ensuring it's clean for the next mount operation.
+
 ## Reference
 
 ### Machine Learning
