@@ -1,0 +1,3 @@
+[submodule "datasets_description"]
+	path = datasets_description
+	url = git@github.com:kaorusha/datasets_description.git
