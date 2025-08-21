@@ -2,13 +2,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import signal_processing
-from typing import Literal, Union
+from typing import Literal, Union, Any, Optional
 import time
 from joblib import load
 from sklearn.metrics import classification_report
 import autosklearn.metrics as metrics
 import mlflow
 import mlflow.data.dataset
+from datasets_description.dataset_description import PREPROCESSING_METHODS, DatasetRegistry
 
 def shapley_value(x_train:np.ndarray, x_test:np.ndarray, y_train:np.ndarray, y_test:np.ndarray, X:pd.DataFrame):
     from sklearn.metrics import accuracy_score, mean_squared_error
@@ -262,7 +263,7 @@ def preprocess_features(df:pd.DataFrame, col:Union[int, list, tuple], stats:bool
         
     return df
 
-def train_test_split(df:pd.DataFrame, test_samples: list, label_mothod = label_transfer):
+def train_test_split(df:pd.DataFrame, test_samples: list, label_method = label_transfer):
     '''
     separate train and test set
 
@@ -273,8 +274,8 @@ def train_test_split(df:pd.DataFrame, test_samples: list, label_mothod = label_t
     X_train = df.loc[[x not in test_samples for x in df['sample_num']]]
     X_test = df.loc[[x in test_samples for x in df['sample_num']]]
 
-    y_train = np.array([label_mothod(sample_num) for sample_num in X_train['sample_num']])
-    y_test = np.array([label_mothod(sample_num) for sample_num in X_test['sample_num']])
+    y_train = np.array([label_method(sample_num) for sample_num in X_train['sample_num']])
+    y_test = np.array([label_method(sample_num) for sample_num in X_test['sample_num']])
 
     # encode categorical columns
     y_train = pd.DataFrame(y_train, dtype="category")
@@ -674,20 +675,19 @@ def evaluate_model(model: object, X_test: pd.DataFrame, y_test: pd.DataFrame,
     return metrics, plots
 
 def log_anomaly_detection_run(model_name: str, model_instance: object, 
+                              tags: Optional[dict[str, Any]],
+                              description: Optional[str],
                               hyperparameters: dict,
                               input_example: pd.DataFrame, # Added for logging model
                               training_time_sec: float,
-                              train_dataset: mlflow.data.dataset.Dataset,
-                              test_dataset: mlflow.data.dataset.Dataset,
+                              Dataset_list: Optional[list[Optional[mlflow.data.dataset.Dataset]]],
+                              context_list: Optional[list[Optional[str]]],
                               metrics: dict,
                               plots: dict,
                               test_samples_num: list,
-                              preprocessing_id: str = 'N/A', 
-                              feature_transformer_id: str = 'None',
-                              good_data_train_split: str = 'N/A',
+                              good_data_train_split: float = 0.3,
                               channel: str = 'mic0',
-                              notes: str = '',
-                              hardware_environment: str = 'Win10/cDAQ9171/NI-9234',
+                              notes: str = ''
                               ):
     ''' Log the anomaly detection run details and evaluate the model to MLflow.
     Args:
@@ -695,6 +695,13 @@ def log_anomaly_detection_run(model_name: str, model_instance: object,
             the name of the model, which will be used in the MLflow run name.
         model_instance (object): 
             the trained model instance to be logged.
+        tags (Optional[dict[str, Any]]): 
+            a dictionary of tags to be associated with the MLflow run.
+        description (Optional[str]): 
+            a description of the MLflow run. description is not searchable through mlflow UI,
+            but can be searched in the dataframe returned by MlflowClient.search_runs().
+        hyperparameters (dict): 
+            a dictionary containing hyperparameters of the model.
         input_example (pd.DataFrame): 
             an example input for the model, used to infer the model signature.
             This should be a single row of the test data, which will be used to log the model.
@@ -703,6 +710,10 @@ def log_anomaly_detection_run(model_name: str, model_instance: object,
             The input_example should be a DataFrame with the same structure as the training data.
         training_time_sec (float): 
             the total training time of the model in seconds.
+        Dataset_list (Optional[list[mlflow.data.dataset.Dataset]]): 
+            a list of MLflow datasets to be logged.
+        context_list (Optional[list[str]]): 
+            a list of context information to be logged.
         metrics (dict): 
             a dictionary containing evaluation metrics of the model, such as ROC_AUC, PR_AUC, etc.
         plots (dict): 
@@ -710,39 +721,30 @@ def log_anomaly_detection_run(model_name: str, model_instance: object,
             Note: plots should be in the format {'confusion_matrix': cm_display, 'roc_curve': roc_display, ...}
             where cm_display and roc_display are matplotlib figure objects.
             These plots will be saved as images in the MLflow run artifacts.
-        hyperparameters (dict): 
-            a dictionary containing hyperparameters of the model.
-        datasets_input: (list): 
-            the MLflow datasets input
         test_samples_num (list): 
             a list of sample numbers used for testing.
-        preprocessing_id (str, optional): 
-            the preprocessing ID used for logging purposes. Defaults to 'N/A'.
-        feature_transformer_id (str, optional): 
-            the feature transformer ID used for logging purposes. Defaults to 'None'.
-        good_data_train_split (str, optional): 
-            the train-test split method used for logging purposes (e.g., '80%'). Defaults to 'N/A'.
+        good_data_train_split (float, optional): 
+            the train-test split method used for logging purposes. Defaults to 0.3.
         channel (str, optional): 
             the sensor channel used for logging purposes. Defaults to 'mic0'.
         notes (str, optional): 
             additional notes for the run. Defaults to ''.
-        hardware_environment (str, optional): 
-            hardware environment information. Defaults to 'Win10/cDAQ9171/NI-9234'.
+    Returns:
+        str: The run ID of the logged MLflow run.
     '''
     import mlflow.sklearn
     import mlflow.models
 
-    with mlflow.start_run(run_name=model_name) as run:
+    with mlflow.start_run(run_name=model_name, tags=tags, description=description) as run:
         mlflow.log_param("model_name", model_name)
         mlflow.log_params(hyperparameters)
-        mlflow.log_param("training_time_sec", training_time_sec)
-        mlflow.log_input(train_dataset, context='training')
-        mlflow.log_input(test_dataset, context='testing')
-        mlflow.log_param("preprocessing_id", preprocessing_id)
-        mlflow.log_param("feature_transformer_id", feature_transformer_id)
+        mlflow.log_metric("training_time_sec", training_time_sec) 
+        # Log the dataset with its context
+        if Dataset_list is not None and context_list is not None:
+            for dataset, context in zip(Dataset_list, context_list):
+                mlflow.log_input(dataset, context=context)
         mlflow.log_param("good_data_train_split", good_data_train_split)
         mlflow.log_param("channel", channel)
-        mlflow.log_param("hardware_environment", hardware_environment)
         mlflow.log_param("test_samples_num", str(test_samples_num))
         mlflow.log_param("notes", notes)
         # since log_metrics only accepts float values, we need to convert the metrics dictionary
@@ -765,7 +767,7 @@ def log_anomaly_detection_run(model_name: str, model_instance: object,
             mlflow.log_figure(fig_obj, f"plots/{plot_name}.png")
         
         print(f"Run {run.info.run_id} logged successfully with model: {model_name}")
-        print(f"Run URL: {mlflow.get_tracking_uri()}")
+        return run.info.run_id
     
 def Novelty_detection():
     '''
@@ -783,38 +785,41 @@ def Novelty_detection():
         parse the filename to get the sample number
         '''
         return filename.split('_')[3]
-    data_source = '../../test_data//20250623_test_samples//psd_20%_window//'
-    df = load_data(format='parquet', dir=data_source, 
-                   keyword='mic', parse_func=parse_func)
+
+    dataset_name = 'PP_HR_5120'
+    dataset_version = '1.0'
+    source_dir = PREPROCESSING_METHODS[dataset_name].get_uri()
+    df = load_data(format='parquet', dir=source_dir, keyword='mic', parse_func=parse_func)
     
     print(df.head())
     abnormal_samples_num = ['b00053', 'b04802']
     good_samples_psd_data = df.loc[[x not in abnormal_samples_num for x in df['sample_num']]]
     
     # 2. 構建測試集 (包含未見過的良品和所有不良品)
-    test_samples_num = sample_from_df(good_samples_psd_data, 0.3) # 30% of good samples for validation
+    good_data_train_split = 0.3 # 30% of good samples for validation
+    test_samples_num = sample_from_df(good_samples_psd_data, good_data_train_split) 
     def label_method(sample_num: str):
         '''
         transfer sample number to label 0 and 1
         '''
         return 0 if sample_num not in abnormal_samples_num else 1
     
-    #df = preprocess_features(df, col=(50,170))
-    X_train_good, X_test, y_train_good, y_test = train_test_split(df, test_samples_num+abnormal_samples_num, label_mothod=label_method)
+    order = (0, 5120)
+    df = preprocess_features(df, col=order)
+    feature_selection_dimensionality_reduction_method = f"sound pressure psd, duty 20%, order {order[0]}-{order[1]}"
+    
+    # feature_selection_dimensionality_reduction_method="from the 50th to the 170th Order"
+    X_train_good, X_test, y_train_good, y_test = train_test_split(df, test_samples_num+abnormal_samples_num, label_method=label_method)
     
     input_example = X_test.iloc[[0]]  # Use the first row of X_test as an example input for logging
     test_samples = test_samples_num + abnormal_samples_num
     contamination = 0.05
-    dataset_id = 'DS_L_04'  # dataset ID for logging purposes
-    preprocessing_id = 'PP_LR_512'  # preprocessing ID for logging purposes
-    feature_transformer_id = 'None'  # feature transformer ID for logging purposes
-    good_data_train_split = '70%'  # train-test split method for logging purposes
     
     # --- MLflow Dataset Logging ---
     # Create an MLflow dataset
-    train_dataset = mlflow.data.pandas_dataset.from_pandas( df=X_train_good, source=data_source, name=dataset_id)
-    test_dataset = mlflow.data.pandas_dataset.from_pandas( df=X_test, source=data_source, name=dataset_id)
-
+    train_dataset = mlflow.data.pandas_dataset.from_pandas( df=X_train_good, source=source_dir, name=dataset_name)
+    test_dataset = mlflow.data.pandas_dataset.from_pandas( df=X_test, source=source_dir, name=dataset_name)
+    register = DatasetRegistry() # for linking training run with datasets
     # 3. compare different novelty detection methods
     # OCSVM
     print('\n--- Training OCSVM ---')
@@ -823,21 +828,22 @@ def Novelty_detection():
     model_ocsvm.fit(X_train_good)
     training_time_ocsvm = time.time() - start_time
     metrics_ocsvm, plots_ocsvm = evaluate_model(model_ocsvm, X_test, y_test)
-    log_anomaly_detection_run(
+    id_ocsvm = log_anomaly_detection_run(
         model_name=model_ocsvm.__class__.__name__,
         model_instance=model_ocsvm,
+        description=feature_selection_dimensionality_reduction_method,
+        tags={"feature_selection": f"{order[0]}-{order[1]}"},
         hyperparameters=model_ocsvm.get_params(),
         input_example=input_example,
         training_time_sec=training_time_ocsvm,
-        train_dataset=train_dataset,
-        test_dataset=test_dataset,
+        Dataset_list=[train_dataset, test_dataset],
+        context_list=['train', 'test'],
         metrics=metrics_ocsvm,
         plots=plots_ocsvm,
         test_samples_num=test_samples,
-        preprocessing_id=preprocessing_id,
-        feature_transformer_id=feature_transformer_id,
         good_data_train_split=good_data_train_split,
     )
+    register.link_dataset_to_run(id_ocsvm, dataset_name, dataset_version)
     # Isolation Forest
     print('\n--- Training Isolation Forest ---')
     start_time = time.time()
@@ -845,21 +851,22 @@ def Novelty_detection():
     model_iforest.fit(X_train_good)
     training_time_iforest = time.time() - start_time
     metrics_iforest, plots_iforest = evaluate_model(model_iforest, X_test, y_test)
-    log_anomaly_detection_run(
+    id_iforest = log_anomaly_detection_run(
         model_name=model_iforest.__class__.__name__,
         model_instance=model_iforest,
+        description=feature_selection_dimensionality_reduction_method,
+        tags={"feature_selection": f"{order[0]}-{order[1]}"},
         hyperparameters=model_iforest.get_params(),
         input_example=input_example,
         training_time_sec=training_time_iforest,
-        train_dataset=train_dataset,
-        test_dataset=test_dataset,
+        Dataset_list=[train_dataset, test_dataset],
+        context_list=['train', 'test'],
         metrics=metrics_iforest,
         plots=plots_iforest,
         test_samples_num=test_samples,
-        preprocessing_id=preprocessing_id,
-        feature_transformer_id=feature_transformer_id,
         good_data_train_split=good_data_train_split,
     )
+    register.link_dataset_to_run(id_iforest, dataset_name, dataset_version)
     # Local Outlier Factor
     print('\n--- Training Local Outlier Factor ---')
     start_time = time.time()
@@ -867,21 +874,22 @@ def Novelty_detection():
     model_lof.fit(X_train_good)
     training_time_lof = time.time() - start_time
     metrics_lof, plots_lof = evaluate_model(model_lof, X_test, y_test)
-    log_anomaly_detection_run(
+    id_lof = log_anomaly_detection_run(
         model_name=model_lof.__class__.__name__,
         model_instance=model_lof,
+        description=feature_selection_dimensionality_reduction_method,
+        tags={"feature_selection": f"{order[0]}-{order[1]}"},
         hyperparameters=model_lof.get_params(),
         input_example=input_example,
         training_time_sec=training_time_lof,
-        train_dataset=train_dataset,
-        test_dataset=test_dataset,
+        Dataset_list=[train_dataset, test_dataset],
+        context_list=['train', 'test'],
         metrics=metrics_lof,
         plots=plots_lof,
         test_samples_num=test_samples,
-        preprocessing_id=preprocessing_id,
-        feature_transformer_id=feature_transformer_id,
         good_data_train_split=good_data_train_split,
     )
+    register.link_dataset_to_run(id_lof, dataset_name, dataset_version)
     '''
     # AutoEncoder
     model_ae = AutoEncoder( hidden_neurons=[64, 32, 16, 32, 64], 
@@ -968,5 +976,5 @@ def view_model_pipeline(model_file_name: str):
 if __name__ == '__main__':
     # Set MLflow tracking URI
     mlflow.set_tracking_uri('file:./mlruns')
-    mlflow.set_experiment('Novelty Detection Experiment on Sound Data PSD Spectrum')
+    mlflow.set_experiment('Novelty Detection Experiment on Sound PSD Spectrum')
     Novelty_detection()
